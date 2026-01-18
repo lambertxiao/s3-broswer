@@ -1,4 +1,4 @@
-const { app, BrowserWindow } = require('electron');
+const { app, BrowserWindow, Menu } = require('electron');
 const { join } = require('path');
 
 function createWindow() {
@@ -11,6 +11,7 @@ function createWindow() {
       contextIsolation: true,
     },
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
+    autoHideMenuBar: true, // 隐藏菜单栏
     show: false,
   });
 
@@ -38,6 +39,9 @@ function createWindow() {
 
 // 当 Electron 完成初始化并准备创建浏览器窗口时调用
 app.whenReady().then(() => {
+  // 创建空菜单以完全移除菜单栏
+  Menu.setApplicationMenu(null);
+  
   createWindow();
 
   // macOS 特定行为：当点击 dock 图标且没有其他窗口打开时，重新创建窗口
