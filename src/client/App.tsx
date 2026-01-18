@@ -855,7 +855,7 @@ function App() {
                 <label>Endpoint (可选，留空使用 AWS S3)</label>
                 <input
                   type="text"
-                  placeholder="http://localhost:9000 or https://oss-cn-hangzhou.aliyuncs.com"
+                  placeholder="https://s3.amazonaws.com"
                   value={config.endpoint}
                   onChange={(e) => handleConfigChange('endpoint', e.target.value)}
                 />
