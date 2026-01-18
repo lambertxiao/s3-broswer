@@ -73,6 +73,100 @@ function App() {
     etag?: string;
   } | null>(null);
   const [loadingFileDetails, setLoadingFileDetails] = useState(false);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [textContent, setTextContent] = useState<string | null>(null);
+  const [loadingPreview, setLoadingPreview] = useState(false);
+  const [showPreviewModal, setShowPreviewModal] = useState(false);
+  const [previewFile, setPreviewFile] = useState<FileItem | null>(null);
+
+  // 判断文件是否可预览
+  const isPreviewable = (fileName: string, contentType?: string): boolean => {
+    const ext = fileName.toLowerCase().split('.').pop() || '';
+    const previewableExtensions = [
+      // 图片
+      'jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'ico',
+      // 文本
+      'txt', 'md', 'json', 'xml', 'html', 'css', 'js', 'ts', 'jsx', 'tsx', 'py', 'java', 'c', 'cpp', 'h', 'hpp', 'sh', 'bat', 'log', 'yaml', 'yml',
+      // PDF
+      'pdf',
+      // 视频
+      'mp4', 'webm', 'ogg',
+      // 音频
+      'mp3', 'wav', 'ogg', 'm4a'
+    ];
+    return previewableExtensions.includes(ext);
+  };
+
+  // 获取文件类型
+  const getFileType = (fileName: string, contentType?: string): 'image' | 'text' | 'pdf' | 'video' | 'audio' | 'unknown' => {
+    const ext = fileName.toLowerCase().split('.').pop() || '';
+    if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'ico'].includes(ext)) return 'image';
+    if (['txt', 'md', 'json', 'xml', 'html', 'css', 'js', 'ts', 'jsx', 'tsx', 'py', 'java', 'c', 'cpp', 'h', 'hpp', 'sh', 'bat', 'log', 'yaml', 'yml'].includes(ext)) return 'text';
+    if (ext === 'pdf') return 'pdf';
+    if (['mp4', 'webm', 'ogg'].includes(ext)) return 'video';
+    if (['mp3', 'wav', 'ogg', 'm4a'].includes(ext)) return 'audio';
+    return 'unknown';
+  };
+
+  // 加载预览
+  const loadPreview = async (file: FileItem, contentType?: string) => {
+    if (!isPreviewable(file.name, contentType)) {
+      setPreviewUrl(null);
+      setTextContent(null);
+      return;
+    }
+
+    setLoadingPreview(true);
+    setPreviewUrl(null);
+    setTextContent(null);
+    try {
+      const url = await generateDownloadUrl(config, selectedBucket, file.key, 3600);
+      setPreviewUrl(url);
+      
+      const fileType = getFileType(file.name, contentType);
+      if (fileType === 'text') {
+        // 对于文本文件，限制大小（比如最大1MB）
+        if (file.size > 1024 * 1024) {
+          setTextContent(null);
+        } else {
+          const response = await fetch(url);
+          const text = await response.text();
+          setTextContent(text);
+        }
+      } else {
+        setTextContent(null);
+      }
+    } catch (err: any) {
+      console.error('Failed to load preview:', err);
+      setPreviewUrl(null);
+      setTextContent(null);
+    } finally {
+      setLoadingPreview(false);
+    }
+  };
+
+  // 打开预览弹窗
+  const handlePreview = async (file: FileItem) => {
+    if (!isPreviewable(file.name)) {
+      alert('This file type cannot be previewed');
+      return;
+    }
+    
+    setPreviewFile(file);
+    setShowPreviewModal(true);
+    setPreviewUrl(null);
+    setTextContent(null);
+    
+    // 获取文件信息以获取contentType
+    try {
+      const info = await getObjectInfo(config, selectedBucket, file.key);
+      await loadPreview(file, info.contentType);
+    } catch (err: any) {
+      console.error('Failed to load file info for preview:', err);
+      // 即使获取info失败，也尝试加载预览
+      await loadPreview(file);
+    }
+  };
 
   const loadFiles = async (path: string = '', bucket?: string, append: boolean = false) => {
     const bucketToUse = bucket || selectedBucket;
@@ -730,6 +824,18 @@ function App() {
                                   <div className="action-buttons">
                                     {item.type === 'file' && (
                                       <>
+                                        {isPreviewable(item.name) && (
+                                          <button
+                                            onClick={() => handlePreview(item)}
+                                            className="btn-icon btn-preview"
+                                            title="Preview"
+                                          >
+                                            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                              <path d="M8 3.5C4.5 3.5 2.5 6 1.5 8C2.5 10 4.5 12.5 8 12.5C11.5 12.5 13.5 10 14.5 8C13.5 6 11.5 3.5 8 3.5Z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                                              <circle cx="8" cy="8" r="2" stroke="currentColor" strokeWidth="1.5"/>
+                                            </svg>
+                                          </button>
+                                        )}
                                         <button
                                           onClick={() => handleDownload(item)}
                                           className="btn-icon btn-download"
@@ -915,6 +1021,7 @@ function App() {
                         <div className="loading" style={{ padding: '20px', textAlign: 'center' }}>Loading file details...</div>
                       ) : (
                         <>
+                          {/* 文件预览 */}
                           <div className="file-details-section">
                             <h4 className="file-details-section-title">Basic Properties</h4>
                             <div className="file-detail-row">
@@ -1043,6 +1150,82 @@ function App() {
             </div>
           )}
         </div>
+
+      {/* 预览弹窗 */}
+      {showPreviewModal && previewFile && (
+        <div className="preview-modal">
+          <div className="preview-modal-content">
+            <div className="preview-modal-header">
+              <h3>{previewFile.name}</h3>
+              <button
+                onClick={() => {
+                  setShowPreviewModal(false);
+                  setPreviewFile(null);
+                  setPreviewUrl(null);
+                  setTextContent(null);
+                }}
+                className="btn-icon btn-close"
+                title="Close"
+              >
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M4 4L12 12M12 4L4 12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+                </svg>
+              </button>
+            </div>
+            <div className="preview-modal-body">
+              {loadingPreview ? (
+                <div className="loading" style={{ padding: '40px', textAlign: 'center' }}>Loading preview...</div>
+              ) : previewUrl ? (
+                (() => {
+                  const fileType = getFileType(previewFile.name, fileDetails?.contentType);
+                  switch (fileType) {
+                    case 'image':
+                      return (
+                        <div className="preview-image-container">
+                          <img src={previewUrl} alt={previewFile.name} className="preview-image" />
+                        </div>
+                      );
+                    case 'text':
+                      return (
+                        <div className="preview-text-container">
+                          <pre className="preview-text">{textContent || 'Loading text content...'}</pre>
+                        </div>
+                      );
+                    case 'pdf':
+                      return (
+                        <div className="preview-pdf-container">
+                          <iframe src={previewUrl} className="preview-pdf" title={previewFile.name} />
+                        </div>
+                      );
+                    case 'video':
+                      return (
+                        <div className="preview-video-container">
+                          <video src={previewUrl} controls className="preview-video" />
+                        </div>
+                      );
+                    case 'audio':
+                      return (
+                        <div className="preview-audio-container">
+                          <audio src={previewUrl} controls className="preview-audio" />
+                        </div>
+                      );
+                    default:
+                      return (
+                        <div className="empty-message" style={{ padding: '40px', textAlign: 'center', color: '#8c959f' }}>
+                          Preview not available for this file type
+                        </div>
+                      );
+                  }
+                })()
+              ) : (
+                <div className="empty-message" style={{ padding: '40px', textAlign: 'center', color: '#8c959f' }}>
+                  Failed to load preview
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
