@@ -982,6 +982,7 @@ function App() {
       )}
 
       {/* 底部固定面板 - 包含文件详情和上传队列 */}
+      {configValid && (
       <div className={`bottom-panel ${bottomPanelExpanded ? 'expanded' : 'collapsed'}`}>
           <div className="bottom-panel-tabs">
             <button
@@ -1150,6 +1151,7 @@ function App() {
             </div>
           )}
         </div>
+      )}
 
       {/* 预览弹窗 */}
       {showPreviewModal && previewFile && (
