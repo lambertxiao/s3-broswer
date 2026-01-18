@@ -150,7 +150,7 @@ body {
 }
 
 .selected-file {
-  color: #0969da;
+  color: #24292e;
   font-weight: 500;
 }
 
@@ -200,8 +200,8 @@ body {
 }
 
 .bottom-panel-tab.active {
-  color: #0969da;
-  border-bottom-color: #0969da;
+  color: #24292e;
+  border-bottom-color: #24292e;
   background: #ffffff;
 }
 
@@ -538,11 +538,13 @@ body {
 /* 上传队列内容 */
 .upload-queue-content {
   height: 100%;
+  text-align: left;
 }
 
 .upload-queue-list {
   height: 100%;
   overflow-y: auto;
+  text-align: left;
 }
 
 .upload-queue-header {
@@ -577,6 +579,7 @@ body {
   gap: 4px;
   flex: 1;
   min-width: 0;
+  text-align: left;
 }
 
 .upload-item-name {
@@ -613,8 +616,8 @@ body {
 }
 
 .upload-status.uploading {
-  color: #0969da;
-  background: #ddf4ff;
+  color: #24292e;
+  background: #f6f8fa;
 }
 
 .upload-status.success {
@@ -644,7 +647,7 @@ body {
 
 .upload-progress-fill {
   height: 100%;
-  background: #0969da;
+  background: #24292e;
   transition: width 0.3s ease;
   border-radius: 3px;
 }
@@ -663,14 +666,14 @@ body {
 }
 
 .btn-primary {
-  background: #0969da;
+  background: #24292e;
   color: #ffffff;
-  border-color: #0969da;
+  border-color: #24292e;
 }
 
 .btn-primary:hover {
-  background: #0860ca;
-  border-color: #0860ca;
+  background: #1a1e22;
+  border-color: #1a1e22;
 }
 
 .btn-upload {
@@ -718,7 +721,7 @@ body {
   align-items: center;
   justify-content: center;
   transition: all 0.2s ease;
-  color: #656d76;
+  color: #656d76 !important;
   width: 28px;
   height: 28px;
 }
@@ -726,10 +729,20 @@ body {
 .btn-icon:hover {
   background: #f6f8fa;
   border-color: #d1d9e0;
+  color: #656d76 !important;
 }
 
 .btn-icon:active {
   background: #e7ebef;
+  color: #656d76 !important;
+}
+
+button.btn-icon {
+  color: #656d76 !important;
+}
+
+button.btn-icon:hover {
+  color: #656d76 !important;
 }
 
 .btn-icon.btn-preview {
@@ -738,17 +751,17 @@ body {
 
 .btn-icon.btn-preview:hover {
   background: #f6f8fa;
-  color: #0969da;
+  color: #24292e;
 }
 
 .btn-download {
-  color: #0969da;
+  color: #24292e;
 }
 
 .btn-download:hover {
-  background: #ddf4ff;
-  border-color: #0969da;
-  color: #0860ca;
+  background: #f6f8fa;
+  border-color: #24292e;
+  color: #24292e;
 }
 
 .btn-delete {
@@ -784,7 +797,7 @@ body {
 .breadcrumb-link {
   background: none;
   border: none;
-  color: #0969da;
+  color: #24292e;
   cursor: pointer;
   font-size: 14px;
   padding: 4px 8px;
@@ -793,7 +806,7 @@ body {
 }
 
 .breadcrumb-link:hover {
-  background: #ddf4ff;
+  background: #f6f8fa;
   text-decoration: underline;
 }
 
@@ -814,7 +827,7 @@ body {
 .loading {
   text-align: center;
   padding: 40px;
-  color: #0969da;
+  color: #24292e;
   font-size: 16px;
   margin: 16px;
 }
@@ -915,7 +928,7 @@ tr:hover {
 .folder-link {
   background: none;
   border: none;
-  color: #0969da;
+  color: #24292e;
   cursor: pointer;
   font-size: 14px;
   font-weight: 500;
@@ -926,12 +939,13 @@ tr:hover {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  display: block;
+  display: flex;
+  align-items: center;
   width: 100%;
 }
 
 .folder-link:hover {
-  background: #ddf4ff;
+  background: #f6f8fa;
   text-decoration: underline;
 }
 
@@ -941,7 +955,9 @@ tr:hover {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  display: block;
+  display: flex;
+  align-items: center;
+  width: 100%;
 }
 
 .empty-message {
@@ -953,7 +969,7 @@ tr:hover {
 
 .loading-more {
   text-align: center;
-  color: #0969da;
+  color: #24292e;
   padding: 16px;
   font-size: 14px;
 }
@@ -987,13 +1003,13 @@ tr:hover {
 }
 
 .bucket-item:hover {
-  border-color: #0969da;
+  border-color: #24292e;
   background: #f6f8fa;
 }
 
 .bucket-item.active {
-  border-color: #0969da;
-  background: #ddf4ff;
+  border-color: #24292e;
+  background: #f6f8fa;
   font-weight: 500;
 }
 
@@ -1040,6 +1056,7 @@ tr:hover {
   justify-content: center;
   align-items: center;
   z-index: 10001;
+  pointer-events: auto;
 }
 
 .config-content {
@@ -1047,11 +1064,18 @@ tr:hover {
   border: 1px solid #d1d9e0;
   border-radius: 6px;
   padding: 24px;
-  max-width: 500px;
+  max-width: 600px;
   width: 90%;
   max-height: 90vh;
   overflow-y: auto;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  pointer-events: auto;
+  position: relative;
+  z-index: 10002;
+}
+
+.config-content input {
+  pointer-events: auto;
 }
 
 .config-content h2 {
@@ -1101,8 +1125,8 @@ tr:hover {
 
 .form-group input:focus {
   outline: none;
-  border-color: #0969da;
-  box-shadow: 0 0 0 3px rgba(9, 105, 218, 0.1);
+  border-color: #24292e;
+  box-shadow: 0 0 0 3px rgba(36, 41, 46, 0.1);
 }
 
 .config-actions {
@@ -1132,6 +1156,67 @@ tr:hover {
 .btn-danger:hover {
   background: #fff5f5;
   border-color: #cf222e;
+}
+
+/* 配置列表样式 */
+.config-list-section {
+  margin-bottom: 24px;
+  padding-bottom: 24px;
+  border-bottom: 1px solid #d1d9e0;
+}
+
+.config-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.config-list-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px;
+  border: 1px solid #d1d9e0;
+  border-radius: 6px;
+  background: #ffffff;
+  transition: all 0.2s;
+}
+
+.config-list-item:hover {
+  background: #f6f8fa;
+  border-color: #8c959f;
+}
+
+.config-list-item.active {
+  background: #f6f8fa;
+  border-color: #24292e;
+}
+
+.config-list-item-name {
+  font-weight: 500;
+  color: #24292e;
+  font-size: 14px;
+}
+
+.config-list-item-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.btn-edit {
+  color: #24292e;
+}
+
+.btn-edit:hover {
+  background: #f6f8fa;
+}
+
+.btn-delete {
+  color: #cf222e;
+}
+
+.btn-delete:hover {
+  background: #fff5f5;
 }
 
 @media (max-width: 768px) {
