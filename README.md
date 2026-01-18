@@ -6,18 +6,24 @@
 
 ## 功能特性
 
-- 📁 **文件浏览**: 支持文件夹导航和文件列表查看（支持滚动加载）
-- ⬆️ **文件上传**: 支持上传文件到当前目录
+- 📁 **文件浏览**: 支持文件夹导航和文件列表查看（支持无限滚动加载）
+- ⬆️ **文件上传**: 支持多文件同时上传，显示实时上传进度
 - ⬇️ **文件下载**: 支持下载文件（使用预签名 URL）
+- 👁️ **文件预览**: 支持预览图片、文本、PDF、视频、音频等常见文件格式
 - 🔗 **签名URL**: 生成可自定义过期时间的签名URL
-- 🗑️ **文件删除**: 支持删除文件和文件夹
-- 🔄 **实时刷新**: 支持刷新当前目录
+- 🗑️ **文件删除**: 支持删除文件（文件夹不支持删除）
+- 📋 **文件详情**: 查看文件的基本属性、自定义元数据和标签
+- ⚙️ **多配置管理**: 支持保存和管理多个 S3 配置，快速切换
+- 🔄 **实时刷新**: 支持刷新当前目录和 bucket 列表
+- 🖥️ **桌面应用**: 支持打包成 Windows、macOS、Linux 桌面应用
 - 📱 **响应式设计**: 适配桌面和移动设备
 
 ## 技术栈
 
 - **前端**: React + TypeScript + Vite
+- **图标库**: lucide-react
 - **AWS SDK**: @aws-sdk/client-s3 (浏览器版本)
+- **桌面应用**: Electron + electron-builder
 - **架构**: 纯客户端，无需后端服务器
 
 ## 安装步骤
@@ -48,30 +54,63 @@
 
 ## 使用说明
 
+### Web 版本
+
 1. **配置 S3 连接**
    - 打开浏览器访问 http://localhost:3000
    - 首次使用时会自动弹出配置界面，或点击右上角的 "⚙️ Configure" 按钮
    - 填写以下信息：
+     - **Configuration Name** (必填): 配置名称，用于区分多个配置
      - **Endpoint** (可选): 自定义 S3 endpoint，留空则使用 AWS S3
+       - AWS S3 示例: `https://s3.amazonaws.com`（或留空）
        - MinIO 示例: `http://localhost:9000`
        - 阿里云 OSS 示例: `https://oss-cn-hangzhou.aliyuncs.com`
        - 腾讯云 COS 示例: `https://cos.ap-guangzhou.myqcloud.com`
-     - **Bucket Name** (必填): 存储桶名称
      - **Access Key ID** (必填): 访问密钥 ID
      - **Secret Access Key** (必填): 访问密钥
      - **Region** (可选): 区域，默认为 `us-east-1`
    - 点击 "💾 Save & Connect" 保存配置并连接
    - 配置会自动保存到浏览器本地存储，下次访问时会自动加载
 
-2. **浏览文件**
+2. **选择 Bucket**
+   - 配置成功后，左侧会显示所有可用的 bucket 列表
+   - 点击 bucket 名称选择要浏览的 bucket
+   - 选中的 bucket 会高亮显示
+
+3. **浏览文件**
    - 使用面包屑导航在不同文件夹间切换
    - 点击文件夹名称进入该文件夹
-   - 点击 "🔄 Refresh" 刷新当前目录
+   - 点击刷新按钮刷新当前目录
+   - 文件列表支持无限滚动，自动加载更多文件
 
-3. **文件操作**
-   - **上传**: 点击 "📁 Select File" 选择文件，然后点击 "⬆️ Upload" 上传
-   - **下载**: 点击文件行的 "⬇️ Download" 按钮下载文件
-   - **删除**: 点击 "🗑️ Delete" 删除文件或文件夹（不可恢复，请谨慎操作）
+4. **文件操作**
+   - **上传**: 点击 "📁 Select Files" 选择文件，然后点击 "⬆️ Upload" 上传，支持多文件同时上传
+   - **预览**: 点击文件行的预览按钮预览文件（支持图片、文本、PDF、视频、音频）
+   - **下载**: 点击文件行的下载按钮下载文件
+   - **生成签名URL**: 点击文件行的链接按钮生成可分享的签名URL
+   - **查看详情**: 点击文件名查看文件的详细信息（基本属性、元数据、标签）
+   - **删除**: 点击删除按钮删除文件（不可恢复，请谨慎操作）
+
+5. **多配置管理**
+   - 在配置页面可以添加、编辑、删除多个 S3 配置
+   - 点击配置列表中的配置名称可以快速切换
+   - 当前使用的配置会显示 "(Current)" 标记
+
+### 桌面应用
+
+项目支持打包成桌面应用，详见 [README-ELECTRON.md](./README-ELECTRON.md)
+
+**快速打包**:
+```bash
+# Windows
+npm run electron:build:win
+
+# macOS
+npm run electron:build:mac
+
+# Linux
+npm run electron:build:linux
+```
 
 ## 架构说明
 
@@ -97,14 +136,16 @@
 
 ### S3 配置
 
-配置信息保存在浏览器 localStorage 中：
+配置信息保存在浏览器 localStorage 中，支持多个配置：
 
 ```typescript
-{
-  endpoint?: string;      // 可选，自定义 endpoint
+interface S3Config {
+  id: string;              // 配置唯一标识
+  name: string;            // 配置名称
+  endpoint?: string;       // 可选，自定义 endpoint，留空使用 AWS S3
   accessKeyId: string;     // 必填，访问密钥 ID
   secretAccessKey: string; // 必填，访问密钥
-  region: string;         // 可选，区域，默认 us-east-1
+  region: string;          // 可选，区域，默认 us-east-1
 }
 ```
 
@@ -139,8 +180,10 @@
   - 删除操作不可恢复，请谨慎操作
   
 - **配置管理**: 
-  - 可以随时点击 "⚙️ Configure" 修改配置
-  - 点击 "🗑️ Clear Config" 清除保存的配置
+  - 可以随时点击 "⚙️ Configure" 添加、编辑、删除配置
+  - 支持保存多个配置，快速切换
+  - 配置名称不能重复
+  - 保存配置前会自动测试连接，确保配置有效
 
 ## 许可证
 
