@@ -1,5 +1,15 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import './App.css';
+import {
+  createS3Client,
+  listBuckets,
+  listObjects,
+  generateDownloadUrl,
+  uploadFile,
+  deleteObject,
+  getObjectInfo,
+  type S3Config,
+} from './s3Client';
 
 interface FileItem {
   name: string;
@@ -17,12 +27,7 @@ interface ListResponse {
   isTruncated?: boolean;
 }
 
-interface S3Config {
-  endpoint: string;
-  accessKeyId: string;
-  secretAccessKey: string;
-  region: string;
-}
+// S3Config 已从 s3Client 导入
 
 interface Bucket {
   name: string;
@@ -37,7 +42,8 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [uploadProgress, setUploadProgress] = useState<Record<string, { progress: number; status: 'pending' | 'uploading' | 'success' | 'error'; error?: string }>>({});
   const [showConfig, setShowConfig] = useState(false);
   const [config, setConfig] = useState<S3Config>({
     endpoint: '',
@@ -57,6 +63,16 @@ function App() {
   const [expiresIn, setExpiresIn] = useState<string>('3600');
   const [signedUrl, setSignedUrl] = useState<string>('');
   const [generatingUrl, setGeneratingUrl] = useState(false);
+  const [selectedFileItem, setSelectedFileItem] = useState<FileItem | null>(null);
+  const [bottomPanelTab, setBottomPanelTab] = useState<'details' | 'upload'>('details');
+  const [bottomPanelExpanded, setBottomPanelExpanded] = useState(false);
+  const [fileDetails, setFileDetails] = useState<{
+    metadata: Record<string, string>;
+    tags: Record<string, string>;
+    contentType?: string;
+    etag?: string;
+  } | null>(null);
+  const [loadingFileDetails, setLoadingFileDetails] = useState(false);
 
   const loadFiles = async (path: string = '', bucket?: string, append: boolean = false) => {
     const bucketToUse = bucket || selectedBucket;
@@ -74,24 +90,13 @@ function App() {
     }
     
     try {
-      const response = await fetch('/api/list', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          prefix: path,
-          bucket: bucketToUse,
-          config,
-          continuationToken: append ? continuationToken : undefined,
-          maxKeys: 100,
-        }),
-      });
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || 'Failed to load files');
-      }
-      const data: ListResponse = await response.json();
+      const data = await listObjects(
+        config,
+        bucketToUse,
+        path,
+        append ? continuationToken : undefined,
+        100
+      );
       
       if (append) {
         // 追加模式：追加到现有列表，并去重
@@ -117,7 +122,7 @@ function App() {
   };
 
   // 加载更多文件（滚动加载）
-  const loadMoreFiles = useCallback(() => {
+  const loadMoreFiles = useCallback(async () => {
     if (loadingMore || !hasMore || !continuationToken || loading || !configValid || !selectedBucket) {
       return;
     }
@@ -125,43 +130,28 @@ function App() {
     setLoadingMore(true);
     setError(null);
     
-    fetch('/api/list', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        prefix: currentPath,
-        bucket: selectedBucket,
+    try {
+      const data = await listObjects(
         config,
-        continuationToken: continuationToken,
-        maxKeys: 100,
-      }),
-    })
-      .then(response => {
-        if (!response.ok) {
-          return response.json().then(errorData => {
-            throw new Error(errorData.error || 'Failed to load files');
-          });
-        }
-        return response.json();
-      })
-      .then((data: ListResponse) => {
-        // 追加数据时去重，避免重复的 key
-        setItems(prev => {
-          const existingKeys = new Set(prev.map(item => item.key));
-          const newItems = [...data.folders, ...data.files].filter(item => !existingKeys.has(item.key));
-          return [...prev, ...newItems];
-        });
-        setContinuationToken(data.continuationToken || null);
-        setHasMore(data.isTruncated || false);
-      })
-      .catch((err: any) => {
-        setError(err.message || 'Failed to load files');
-      })
-      .finally(() => {
-        setLoadingMore(false);
+        selectedBucket,
+        currentPath,
+        continuationToken,
+        100
+      );
+      
+      // 追加数据时去重，避免重复的 key
+      setItems(prev => {
+        const existingKeys = new Set(prev.map(item => item.key));
+        const newItems = [...data.folders, ...data.files].filter(item => !existingKeys.has(item.key));
+        return [...prev, ...newItems];
       });
+      setContinuationToken(data.continuationToken || null);
+      setHasMore(data.isTruncated || false);
+    } catch (err: any) {
+      setError(err.message || 'Failed to load files');
+    } finally {
+      setLoadingMore(false);
+    }
   }, [loadingMore, hasMore, continuationToken, currentPath, loading, configValid, selectedBucket, config]);
 
   // 加载保存的配置
@@ -191,19 +181,8 @@ function App() {
     setLoadingBuckets(true);
     setError(null);
     try {
-      const response = await fetch('/api/buckets', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ config }),
-      });
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || 'Failed to load buckets');
-      }
-      const data = await response.json();
-      setBuckets(data.buckets || []);
+      const bucketsList = await listBuckets(config);
+      setBuckets(bucketsList);
     } catch (err: any) {
       setError(err.message || 'Failed to load buckets');
     } finally {
@@ -264,25 +243,10 @@ function App() {
 
   const handleDownload = async (file: FileItem) => {
     try {
-      const response = await fetch('/api/download', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          key: file.key,
-          bucket: selectedBucket,
-          config,
-        }),
-      });
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || 'Failed to generate download URL');
-      }
-      const data = await response.json();
-      window.open(data.url, '_blank');
+      const url = await generateDownloadUrl(config, selectedBucket, file.key);
+      window.open(url, '_blank');
     } catch (err: any) {
-      alert(err.message || 'Failed to download file');
+      alert(err.message || 'Failed to generate download URL');
     }
   };
 
@@ -291,21 +255,7 @@ function App() {
       return;
     }
     try {
-      const response = await fetch('/api/delete', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          key: item.key,
-          bucket: selectedBucket,
-          config,
-        }),
-      });
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || 'Failed to delete');
-      }
+      await deleteObject(config, selectedBucket, item.key);
       loadFiles(currentPath);
     } catch (err: any) {
       alert(err.message || 'Failed to delete file');
@@ -330,24 +280,8 @@ function App() {
 
     setGeneratingUrl(true);
     try {
-      const response = await fetch('/api/sign-url', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          key: selectedFileForSign.key,
-          bucket: selectedBucket,
-          config,
-          expiresIn: expires,
-        }),
-      });
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || 'Failed to generate signed URL');
-      }
-      const data = await response.json();
-      setSignedUrl(data.url);
+      const url = await generateDownloadUrl(config, selectedBucket, selectedFileForSign.key, expires);
+      setSignedUrl(url);
     } catch (err: any) {
       alert(err.message || 'Failed to generate signed URL');
     } finally {
@@ -378,41 +312,91 @@ function App() {
   };
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      setSelectedFile(e.target.files[0]);
+    if (e.target.files && e.target.files.length > 0) {
+      const files = Array.from(e.target.files);
+      setSelectedFiles(prev => [...prev, ...files]);
+      // 初始化上传进度
+      const newProgress: Record<string, { progress: number; status: 'pending' | 'uploading' | 'success' | 'error'; error?: string }> = {};
+      files.forEach(file => {
+        newProgress[file.name] = { progress: 0, status: 'pending' };
+      });
+      setUploadProgress(prev => ({ ...prev, ...newProgress }));
     }
   };
 
+  const removeFile = (fileName: string) => {
+    setSelectedFiles(prev => prev.filter(f => f.name !== fileName));
+    setUploadProgress(prev => {
+      const newProgress = { ...prev };
+      delete newProgress[fileName];
+      return newProgress;
+    });
+  };
+
+  const clearSelectedFiles = () => {
+    setSelectedFiles([]);
+    setUploadProgress({});
+    const fileInput = document.getElementById('file-input') as HTMLInputElement;
+    if (fileInput) fileInput.value = '';
+  };
+
   const handleUpload = async () => {
-    if (!selectedFile) {
-      alert('Please select a file');
+    if (selectedFiles.length === 0) {
+      alert('Please select at least one file');
       return;
     }
 
     setUploading(true);
-    try {
-      const formData = new FormData();
-      formData.append('file', selectedFile);
-      formData.append('prefix', currentPath);
-      formData.append('bucket', selectedBucket);
-      formData.append('config', JSON.stringify(config));
+    
+    // 上传所有文件
+    const uploadPromises = selectedFiles.map(async (file) => {
+      const key = currentPath ? `${currentPath}${file.name}` : file.name;
+      
+      // 更新状态为上传中
+      setUploadProgress(prev => ({
+        ...prev,
+        [file.name]: { progress: 0, status: 'uploading' }
+      }));
 
-      const response = await fetch('/api/upload', {
-        method: 'POST',
-        body: formData,
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || 'Failed to upload file');
+      try {
+        await uploadFile(
+          config, 
+          selectedBucket, 
+          key, 
+          file,
+          (progress) => {
+            // 更新上传进度
+            setUploadProgress(prev => ({
+              ...prev,
+              [file.name]: { progress, status: 'uploading' }
+            }));
+          }
+        );
+        
+        // 更新状态为成功
+        setUploadProgress(prev => ({
+          ...prev,
+          [file.name]: { progress: 100, status: 'success' }
+        }));
+      } catch (err: any) {
+        // 更新状态为错误
+        setUploadProgress(prev => ({
+          ...prev,
+          [file.name]: { progress: 0, status: 'error', error: err.message || 'Failed to upload file' }
+        }));
+        throw err;
       }
+    });
 
-      setSelectedFile(null);
-      const fileInput = document.getElementById('file-input') as HTMLInputElement;
-      if (fileInput) fileInput.value = '';
-      loadFiles(currentPath);
-    } catch (err: any) {
-      alert(err.message || 'Failed to upload file');
+    try {
+      await Promise.all(uploadPromises);
+      // 延迟清除，让用户看到成功状态
+      setTimeout(() => {
+        clearSelectedFiles();
+        loadFiles(currentPath);
+      }, 1000);
+    } catch (err) {
+      // 部分文件可能上传失败，但不清除列表，让用户看到哪些失败了
     } finally {
       setUploading(false);
     }
@@ -607,14 +591,12 @@ function App() {
             {selectedBucket ? (
               <>
                 <div className="content-header">
-                  <div className="selected-bucket-info">
-                    <strong>Bucket:</strong> {selectedBucket}
-                  </div>
                   <div className="toolbar">
                     <div className="upload-section">
                       <input
                         id="file-input"
                         type="file"
+                        multiple
                         onChange={handleFileSelect}
                         style={{ display: 'none' }}
                       />
@@ -622,17 +604,23 @@ function App() {
                         onClick={() => document.getElementById('file-input')?.click()}
                         className="btn btn-primary"
                       >
-                        📁 Select File
+                        📁 Select Files
                       </button>
-                      {selectedFile && (
+                      {selectedFiles.length > 0 && (
                         <>
-                          <span className="selected-file">{selectedFile.name}</span>
                           <button
                             onClick={handleUpload}
                             disabled={uploading}
                             className="btn btn-upload"
                           >
-                            {uploading ? 'Uploading...' : '⬆️ Upload'}
+                            {uploading ? 'Uploading...' : `⬆️ Upload ${selectedFiles.length} File${selectedFiles.length > 1 ? 's' : ''}`}
+                          </button>
+                          <button
+                            onClick={clearSelectedFiles}
+                            className="btn btn-secondary"
+                            disabled={uploading}
+                          >
+                            ✕ Clear
                           </button>
                         </>
                       )}
@@ -641,6 +629,7 @@ function App() {
                       🔄 Refresh
                     </button>
                   </div>
+
                 </div>
 
                 <div className="breadcrumb">
@@ -695,7 +684,44 @@ function App() {
                                       📁 {item.name}
                                     </button>
                                   ) : (
-                                    <span className="file-name">📄 {item.name}</span>
+                                    <button
+                                      onClick={async () => {
+                                        setSelectedFileItem(item);
+                                        setBottomPanelTab('details');
+                                        setLoadingFileDetails(true);
+                                        setFileDetails(null);
+                                        try {
+                                          const info = await getObjectInfo(config, selectedBucket, item.key);
+                                          setFileDetails({
+                                            metadata: info.metadata || {},
+                                            tags: info.tags || {},
+                                            contentType: info.contentType,
+                                            etag: info.etag,
+                                          });
+                                        } catch (err: any) {
+                                          console.error('Failed to load file details:', err);
+                                          setFileDetails({
+                                            metadata: {},
+                                            tags: {},
+                                          });
+                                        } finally {
+                                          setLoadingFileDetails(false);
+                                        }
+                                      }}
+                                      className="file-name file-name-button"
+                                      style={{ 
+                                        background: 'none', 
+                                        border: 'none', 
+                                        padding: 0, 
+                                        cursor: 'pointer',
+                                        color: selectedFileItem?.key === item.key ? '#0969da' : 'inherit',
+                                        fontWeight: selectedFileItem?.key === item.key ? 600 : 'normal',
+                                        textAlign: 'left',
+                                        width: '100%'
+                                      }}
+                                    >
+                                      📄 {item.name}
+                                    </button>
                                   )}
                                 </td>
                                 <td>{item.type === 'file' ? formatSize(item.size) : '-'}</td>
@@ -762,6 +788,7 @@ function App() {
                     </table>
                   </div>
                 )}
+
               </>
             ) : (
               <div className="empty-state">
@@ -847,6 +874,175 @@ function App() {
           </div>
         </div>
       )}
+
+      {/* 底部固定面板 - 包含文件详情和上传队列 */}
+      <div className={`bottom-panel ${bottomPanelExpanded ? 'expanded' : 'collapsed'}`}>
+          <div className="bottom-panel-tabs">
+            <button
+              className={`bottom-panel-tab ${bottomPanelTab === 'details' ? 'active' : ''}`}
+              onClick={() => {
+                if (bottomPanelTab === 'details' && bottomPanelExpanded) {
+                  setBottomPanelExpanded(false);
+                } else {
+                  setBottomPanelTab('details');
+                  setBottomPanelExpanded(true);
+                }
+              }}
+            >
+              📄 File Details
+            </button>
+            <button
+              className={`bottom-panel-tab ${bottomPanelTab === 'upload' ? 'active' : ''}`}
+              onClick={() => {
+                if (bottomPanelTab === 'upload' && bottomPanelExpanded) {
+                  setBottomPanelExpanded(false);
+                } else {
+                  setBottomPanelTab('upload');
+                  setBottomPanelExpanded(true);
+                }
+              }}
+            >
+              ⬆️ Upload Queue {selectedFiles.length > 0 && `(${selectedFiles.length})`}
+            </button>
+          </div>
+          {bottomPanelExpanded && (
+            <div className="bottom-panel-content">
+            {bottomPanelTab === 'details' && (
+              <div className="file-details">
+                {selectedFileItem ? (
+                  <div className="file-details-body">
+                      {loadingFileDetails ? (
+                        <div className="loading" style={{ padding: '20px', textAlign: 'center' }}>Loading file details...</div>
+                      ) : (
+                        <>
+                          <div className="file-details-section">
+                            <h4 className="file-details-section-title">Basic Properties</h4>
+                            <div className="file-detail-row">
+                              <span className="file-detail-label">Key:</span>
+                              <span className="file-detail-value">{selectedFileItem.key}</span>
+                            </div>
+                            <div className="file-detail-row">
+                              <span className="file-detail-label">Size:</span>
+                              <span className="file-detail-value">{formatSize(selectedFileItem.size)}</span>
+                            </div>
+                            <div className="file-detail-row">
+                              <span className="file-detail-label">Last Modified:</span>
+                              <span className="file-detail-value">{formatDate(selectedFileItem.lastModified)}</span>
+                            </div>
+                            {fileDetails?.contentType && (
+                              <div className="file-detail-row">
+                                <span className="file-detail-label">Content Type:</span>
+                                <span className="file-detail-value">{fileDetails.contentType}</span>
+                              </div>
+                            )}
+                            {fileDetails?.etag && (
+                              <div className="file-detail-row">
+                                <span className="file-detail-label">ETag:</span>
+                                <span className="file-detail-value">{fileDetails.etag}</span>
+                              </div>
+                            )}
+                          </div>
+
+                          {fileDetails && Object.keys(fileDetails.metadata).length > 0 && (
+                            <div className="file-details-section">
+                              <h4 className="file-details-section-title">Custom Metadata</h4>
+                              {Object.entries(fileDetails.metadata).map(([key, value]) => (
+                                <div key={key} className="file-detail-row">
+                                  <span className="file-detail-label">{key}:</span>
+                                  <span className="file-detail-value">{value}</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+
+                          {fileDetails && Object.keys(fileDetails.tags).length > 0 && (
+                            <div className="file-details-section">
+                              <h4 className="file-details-section-title">Tags</h4>
+                              {Object.entries(fileDetails.tags).map(([key, value]) => (
+                                <div key={key} className="file-detail-row">
+                                  <span className="file-detail-label">{key}:</span>
+                                  <span className="file-detail-value">{value}</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+
+                          {fileDetails && Object.keys(fileDetails.metadata).length === 0 && Object.keys(fileDetails.tags).length === 0 && (
+                            <div className="empty-message" style={{ padding: '20px', textAlign: 'center', color: '#8c959f' }}>
+                              No custom metadata or tags
+                            </div>
+                          )}
+                        </>
+                      )}
+                  </div>
+                ) : (
+                  <div className="empty-message" style={{ padding: '40px', textAlign: 'center', color: '#8c959f' }}>
+                    No file selected. Click on a file to view its details.
+                  </div>
+                )}
+              </div>
+            )}
+            {bottomPanelTab === 'upload' && (
+              <div className="upload-queue-content">
+                {selectedFiles.length === 0 ? (
+                  <div className="empty-message" style={{ padding: '40px', textAlign: 'center' }}>
+                    No files in upload queue
+                  </div>
+                ) : (
+                  <div className="upload-queue-list">
+                    {selectedFiles.map((file) => {
+                      const progress = uploadProgress[file.name] || { progress: 0, status: 'pending' as const };
+                      return (
+                        <div key={file.name} className="upload-queue-item">
+                          <div className="upload-item-info">
+                            <span className="upload-item-name">{file.name}</span>
+                            <span className="upload-item-size">{formatSize(file.size)}</span>
+                          </div>
+                          <div className="upload-item-actions">
+                            {progress.status === 'pending' && (
+                              <span className="upload-status pending">Pending</span>
+                            )}
+                            {progress.status === 'uploading' && (
+                              <div className="upload-progress">
+                                <div className="upload-progress-bar">
+                                  <div 
+                                    className="upload-progress-fill" 
+                                    style={{ width: `${progress.progress}%` }}
+                                  />
+                                </div>
+                                <span className="upload-status uploading">{progress.progress}%</span>
+                              </div>
+                            )}
+                            {progress.status === 'success' && (
+                              <span className="upload-status success">✓ Success</span>
+                            )}
+                            {progress.status === 'error' && (
+                              <span className="upload-status error" title={progress.error}>
+                                ✕ Failed
+                              </span>
+                            )}
+                            {!uploading && (
+                              <button
+                                onClick={() => removeFile(file.name)}
+                                className="btn-icon btn-delete"
+                                title="Remove"
+                              >
+                                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                  <path d="M4 4L12 12M12 4L4 12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+                                </svg>
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+            </div>
+          )}
+        </div>
     </div>
   );
 }

@@ -2,11 +2,14 @@
 
 一个现代化的网页端 S3 存储浏览器，支持浏览、上传、下载和删除 S3 存储桶中的文件。
 
+**纯客户端架构** - 无需服务器，可直接部署到静态网站托管服务。
+
 ## 功能特性
 
-- 📁 **文件浏览**: 支持文件夹导航和文件列表查看
+- 📁 **文件浏览**: 支持文件夹导航和文件列表查看（支持滚动加载）
 - ⬆️ **文件上传**: 支持上传文件到当前目录
 - ⬇️ **文件下载**: 支持下载文件（使用预签名 URL）
+- 🔗 **签名URL**: 生成可自定义过期时间的签名URL
 - 🗑️ **文件删除**: 支持删除文件和文件夹
 - 🔄 **实时刷新**: 支持刷新当前目录
 - 📱 **响应式设计**: 适配桌面和移动设备
@@ -14,8 +17,8 @@
 ## 技术栈
 
 - **前端**: React + TypeScript + Vite
-- **后端**: Node.js + Express + TypeScript
-- **AWS SDK**: @aws-sdk/client-s3
+- **AWS SDK**: @aws-sdk/client-s3 (浏览器版本)
+- **架构**: 纯客户端，无需后端服务器
 
 ## 安装步骤
 
@@ -29,16 +32,19 @@
    npm run dev
    ```
    
-   这将同时启动：
-   - 前端开发服务器: http://localhost:3000
-   - 后端 API 服务器: http://localhost:3001
+   访问 http://localhost:3000
 
-4. **构建生产版本**
+3. **构建生产版本**
    ```bash
    npm run build
-   npm run build:server
-   npm start
    ```
+   
+   构建后的文件在 `dist` 目录，可以部署到任何静态网站托管服务：
+   - GitHub Pages
+   - Vercel
+   - Netlify
+   - Cloudflare Pages
+   - 或任何支持静态文件的服务器
 
 ## 使用说明
 
@@ -67,29 +73,38 @@
    - **下载**: 点击文件行的 "⬇️ Download" 按钮下载文件
    - **删除**: 点击 "🗑️ Delete" 删除文件或文件夹（不可恢复，请谨慎操作）
 
-## API 端点
+## 架构说明
 
-所有 API 端点都需要在请求体中传递 S3 配置信息：
+### 纯客户端架构
 
-- `POST /api/list` - 获取文件列表
-  - Body: `{ prefix: string, config: S3Config }`
-- `POST /api/download` - 获取文件下载 URL
-  - Body: `{ key: string, config: S3Config }`
-- `POST /api/upload` - 上传文件（multipart/form-data）
-  - FormData: `file`, `prefix`, `config` (JSON string)
-- `POST /api/delete` - 删除文件
-  - Body: `{ key: string, config: S3Config }`
-- `POST /api/info` - 获取文件信息
-  - Body: `{ key: string, config: S3Config }`
+本项目采用纯客户端架构，所有 S3 操作都在浏览器中直接完成：
 
-其中 `S3Config` 包含：
+- ✅ **无需服务器** - 可以直接部署到静态网站托管
+- ✅ **直接调用 S3 API** - 使用 AWS SDK for JavaScript (浏览器版本)
+- ✅ **配置本地存储** - S3 凭证保存在浏览器 localStorage 中
+
+### 安全说明
+
+⚠️ **重要提示**：
+- AWS 凭证会存储在浏览器 localStorage 中
+- 凭证会暴露在浏览器代码中（虽然经过打包，但仍可被查看）
+- **不适合生产环境使用**
+- **建议用于**：
+  - 个人使用
+  - 内网环境
+  - 开发/测试环境
+  - 使用临时凭证（STS）
+
+### S3 配置
+
+配置信息保存在浏览器 localStorage 中：
+
 ```typescript
 {
   endpoint?: string;      // 可选，自定义 endpoint
-  bucket: string;         // 必填，存储桶名称
   accessKeyId: string;     // 必填，访问密钥 ID
   secretAccessKey: string; // 必填，访问密钥
-  region: string;         // 可选，区域
+  region: string;         // 可选，区域，默认 us-east-1
 }
 ```
 
@@ -103,12 +118,29 @@
 
 ## 注意事项
 
-- **安全性**: 配置信息保存在浏览器本地存储中，不会发送到服务器（除了 API 请求时）。建议在公共计算机上使用后清除配置
-- **权限**: 确保你的凭证有足够的权限访问指定的存储桶（ListObjects, GetObject, PutObject, DeleteObject）
-- **网络**: 使用自定义 endpoint 时，确保浏览器可以访问该 endpoint（注意 CORS 设置）
-- **数据**: 上传的文件会保存到当前浏览的目录路径
-- **删除**: 删除操作不可恢复，请谨慎操作
-- **配置管理**: 可以随时点击 "⚙️ Configure" 修改配置，或点击 "🗑️ Clear Config" 清除保存的配置
+- **安全性**: 
+  - ⚠️ AWS 凭证会暴露在浏览器中，请谨慎使用
+  - 配置信息保存在浏览器 localStorage 中
+  - 建议在公共计算机上使用后清除配置
+  - 不适合在生产环境使用真实的生产凭证
+  
+- **权限**: 确保你的凭证有足够的权限访问指定的存储桶：
+  - `s3:ListBucket` - 列出存储桶和对象
+  - `s3:GetObject` - 下载文件
+  - `s3:PutObject` - 上传文件
+  - `s3:DeleteObject` - 删除文件
+  
+- **网络**: 
+  - 使用自定义 endpoint 时，确保浏览器可以访问该 endpoint
+  - 某些 S3 服务可能需要配置 CORS 允许浏览器访问
+  
+- **数据**: 
+  - 上传的文件会保存到当前浏览的目录路径
+  - 删除操作不可恢复，请谨慎操作
+  
+- **配置管理**: 
+  - 可以随时点击 "⚙️ Configure" 修改配置
+  - 点击 "🗑️ Clear Config" 清除保存的配置
 
 ## 许可证
 
