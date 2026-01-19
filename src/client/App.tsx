@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import './App.css';
 import {
-  createS3Client,
   listBuckets,
   listObjects,
   generateDownloadUrl,
@@ -10,18 +9,18 @@ import {
   getObjectInfo,
   type S3Config,
 } from './s3Client';
-import { 
-  RefreshCw, 
-  Eye, 
-  Download, 
-  Trash2, 
-  Link2, 
-  X, 
-  Pencil, 
-  Folder, 
-  File, 
-  Package, 
-  Upload, 
+import {
+  RefreshCw,
+  Eye,
+  Download,
+  Trash2,
+  Link2,
+  X,
+  Pencil,
+  Folder,
+  File,
+  Package,
+  Upload,
   Settings,
   Check,
   AlertCircle
@@ -32,22 +31,14 @@ interface FileItem {
   key: string;
   type: 'file' | 'folder';
   size: number;
-  lastModified: string | null;
-}
-
-interface ListResponse {
-  folders: FileItem[];
-  files: FileItem[];
-  currentPath: string;
-  continuationToken?: string | null;
-  isTruncated?: boolean;
+  lastModified: Date | null;
 }
 
 // S3Config 已从 s3Client 导入
 
 interface Bucket {
   name: string;
-  creationDate: string | null;
+  creationDate: Date | null;
 }
 
 const STORAGE_KEY = 's3_browser_configs';
@@ -107,7 +98,7 @@ function App() {
   const [previewFile, setPreviewFile] = useState<FileItem | null>(null);
 
   // 判断文件是否可预览
-  const isPreviewable = (fileName: string, contentType?: string): boolean => {
+  const isPreviewable = (fileName: string, _contentType?: string): boolean => {
     const ext = fileName.toLowerCase().split('.').pop() || '';
     const previewableExtensions = [
       // 图片
@@ -125,7 +116,7 @@ function App() {
   };
 
   // 获取文件类型
-  const getFileType = (fileName: string, contentType?: string): 'image' | 'text' | 'pdf' | 'video' | 'audio' | 'unknown' => {
+  const getFileType = (fileName: string, _contentType?: string): 'image' | 'text' | 'pdf' | 'video' | 'audio' | 'unknown' => {
     const ext = fileName.toLowerCase().split('.').pop() || '';
     if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'ico'].includes(ext)) return 'image';
     if (['txt', 'md', 'json', 'xml', 'html', 'css', 'js', 'ts', 'jsx', 'tsx', 'py', 'java', 'c', 'cpp', 'h', 'hpp', 'sh', 'bat', 'log', 'yaml', 'yml'].includes(ext)) return 'text';
@@ -149,7 +140,7 @@ function App() {
     try {
       const url = await generateDownloadUrl(config, selectedBucket, file.key, 3600);
       setPreviewUrl(url);
-      
+
       const fileType = getFileType(file.name, contentType);
       if (fileType === 'text') {
         // 对于文本文件，限制大小（比如最大1MB）
@@ -178,12 +169,12 @@ function App() {
       alert('This file type cannot be previewed');
       return;
     }
-    
+
     setPreviewFile(file);
     setShowPreviewModal(true);
     setPreviewUrl(null);
     setTextContent(null);
-    
+
     // 获取文件信息以获取contentType
     try {
       const info = await getObjectInfo(config, selectedBucket, file.key);
@@ -201,7 +192,7 @@ function App() {
       setError('Please select a bucket first');
       return;
     }
-    
+
     // 如果是追加模式（滚动加载），使用 loadingMore，否则使用 loading
     if (append) {
       setLoadingMore(true);
@@ -209,7 +200,7 @@ function App() {
       setLoading(true);
       setError(null);
     }
-    
+
     try {
       const data = await listObjects(
         config,
@@ -218,7 +209,7 @@ function App() {
         append ? continuationToken : undefined,
         100
       );
-      
+
       if (append) {
         // 追加模式：追加到现有列表，并去重
         setItems(prev => {
@@ -230,7 +221,7 @@ function App() {
         // 新加载：替换列表
         setItems([...data.folders, ...data.files]);
       }
-      
+
       setCurrentPath(data.currentPath);
       setContinuationToken(data.continuationToken || null);
       setHasMore(data.isTruncated || false);
@@ -247,10 +238,10 @@ function App() {
     if (loadingMore || !hasMore || !continuationToken || loading || !configValid || !selectedBucket) {
       return;
     }
-    
+
     setLoadingMore(true);
     setError(null);
-    
+
     try {
       const data = await listObjects(
         config,
@@ -259,7 +250,7 @@ function App() {
         continuationToken,
         100
       );
-      
+
       // 追加数据时去重，避免重复的 key
       setItems(prev => {
         const existingKeys = new Set(prev.map(item => item.key));
@@ -279,12 +270,12 @@ function App() {
   useEffect(() => {
     const savedConfigs = localStorage.getItem(STORAGE_KEY);
     const savedCurrentId = localStorage.getItem(CURRENT_CONFIG_KEY);
-    
+
     if (savedConfigs) {
       try {
         const parsed = JSON.parse(savedConfigs) as S3ConfigWithId[];
         setConfigs(parsed);
-        
+
         if (parsed.length > 0) {
           const currentId = savedCurrentId || parsed[0].id;
           const currentConfig = parsed.find(c => c.id === currentId) || parsed[0];
@@ -338,7 +329,7 @@ function App() {
 
   // 滚动加载更多
   const fileListRef = useRef<HTMLDivElement>(null);
-  
+
   useEffect(() => {
     const fileListContainer = fileListRef.current;
     if (!fileListContainer) return;
@@ -409,7 +400,7 @@ function App() {
 
   const generateSignUrl = async () => {
     if (!selectedFileForSign) return;
-    
+
     const expires = parseInt(expiresIn);
     if (isNaN(expires) || expires < 1 || expires > 604800) {
       alert('Expires time must be between 1 second and 7 days (604800 seconds)');
@@ -485,11 +476,11 @@ function App() {
     }
 
     setUploading(true);
-    
+
     // 上传所有文件
     const uploadPromises = selectedFiles.map(async (file) => {
       const key = currentPath ? `${currentPath}${file.name}` : file.name;
-      
+
       // 更新状态为上传中
       setUploadProgress(prev => ({
         ...prev,
@@ -498,9 +489,9 @@ function App() {
 
       try {
         await uploadFile(
-          config, 
-          selectedBucket, 
-          key, 
+          config,
+          selectedBucket,
+          key,
           file,
           (progress) => {
             // 更新上传进度
@@ -510,7 +501,7 @@ function App() {
             }));
           }
         );
-        
+
         // 更新状态为成功
         setUploadProgress(prev => ({
           ...prev,
@@ -557,9 +548,9 @@ function App() {
       alert('Please fill in all required fields');
       return;
     }
-    
+
     const trimmedName = config.name.trim();
-    
+
     // 检查配置名是否重复
     const nameExists = configs.some(c => {
       // 如果是编辑模式，排除当前编辑的配置
@@ -568,18 +559,18 @@ function App() {
       }
       return c.name.trim().toLowerCase() === trimmedName.toLowerCase();
     });
-    
+
     if (nameExists) {
       alert('Configuration name already exists. Please use a different name.');
       return;
     }
-    
+
     const configToSave: S3ConfigWithId = {
       ...config,
       id: config.id || `config_${Date.now()}`,
       name: trimmedName,
     };
-    
+
     let updatedConfigs: S3ConfigWithId[];
     if (editingConfigId && configs.find(c => c.id === editingConfigId)) {
       // 更新现有配置
@@ -588,7 +579,7 @@ function App() {
       // 添加新配置
       updatedConfigs = [...configs, configToSave];
     }
-    
+
     // 测试配置是否有效：尝试加载 bucket 列表
     try {
       const s3Config: S3Config = {
@@ -598,7 +589,7 @@ function App() {
         region: configToSave.region,
       };
       await listBuckets(s3Config);
-      
+
       // 配置有效，保存并应用
       localStorage.setItem(STORAGE_KEY, JSON.stringify(updatedConfigs));
       setConfigs(updatedConfigs);
@@ -622,7 +613,7 @@ function App() {
       console.error('S3 connection test failed:', err);
     }
   };
-  
+
   const handleSelectConfig = async (configId: string) => {
     const selectedConfig = configs.find(c => c.id === configId);
     if (selectedConfig) {
@@ -644,7 +635,7 @@ function App() {
       }
     }
   };
-  
+
   const handleAddNewConfig = () => {
     setConfig({
       id: '',
@@ -657,7 +648,7 @@ function App() {
     setConfigValid(false);
     setEditingConfigId(null);
   };
-  
+
   const handleEditConfig = (configId: string) => {
     const configToEdit = configs.find(c => c.id === configId);
     if (configToEdit) {
@@ -667,7 +658,7 @@ function App() {
       setConfigValid(!!(configToEdit.accessKeyId && configToEdit.secretAccessKey));
     }
   };
-  
+
   const handleDeleteConfig = (configId: string) => {
     if (!confirm('Are you sure you want to delete this configuration?')) {
       return;
@@ -675,7 +666,7 @@ function App() {
     const updatedConfigs = configs.filter(c => c.id !== configId);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(updatedConfigs));
     setConfigs(updatedConfigs);
-    
+
     if (currentConfigId === configId) {
       if (updatedConfigs.length > 0) {
         const newCurrent = updatedConfigs[0];
@@ -734,15 +725,16 @@ function App() {
     return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
   };
 
-  const formatDate = (date: string | null): string => {
+  const formatDate = (date: Date | string | null): string => {
     if (!date) return '-';
+    if (date instanceof Date) return date.toLocaleString();
     return new Date(date).toLocaleString();
   };
 
   const breadcrumbs = currentPath
     ? ['', ...currentPath.split('/').filter(Boolean)]
     : [''];
-  
+
   // 构建面包屑路径的辅助函数
   const getBreadcrumbPath = (index: number): string => {
     if (index === 0) {
@@ -762,7 +754,7 @@ function App() {
       </header>
 
       {showConfig && (
-        <div 
+        <div
           className="config-modal"
           onClick={(e) => {
             // 点击背景层时关闭弹窗
@@ -778,13 +770,13 @@ function App() {
             }
           }}
         >
-          <div 
-            className="config-content" 
+          <div
+            className="config-content"
             onClick={(e) => e.stopPropagation()}
             onMouseDown={(e) => e.stopPropagation()}
           >
             <h2>S3 Configuration</h2>
-            
+
             {/* 配置列表 */}
             {configs.length > 0 && (
               <div className="config-list-section">
@@ -792,7 +784,7 @@ function App() {
                 <div className="config-list">
                   {configs.map((cfg) => (
                     <div key={cfg.id} className={`config-list-item ${currentConfigId === cfg.id ? 'active' : ''}`}>
-                      <div 
+                      <div
                         className="config-list-item-name"
                         onClick={(e) => {
                           e.stopPropagation();
@@ -827,19 +819,19 @@ function App() {
                     </div>
                   ))}
                 </div>
-                <button 
+                <button
                   onClick={(e) => {
                     e.stopPropagation();
                     handleAddNewConfig();
-                  }} 
-                  className="btn btn-secondary" 
+                  }}
+                  className="btn btn-secondary"
                   style={{ marginTop: '12px', width: '100%' }}
                 >
                   ➕ Add New Configuration
                 </button>
               </div>
             )}
-            
+
             <div className="config-form" style={{ marginTop: configs.length > 0 ? '24px' : '0' }}>
               <div className="form-group">
                 <label>Configuration Name <span className="required">*</span></label>
@@ -890,16 +882,16 @@ function App() {
                 />
               </div>
               <div className="config-actions">
-                <button 
+                <button
                   onClick={(e) => {
                     e.stopPropagation();
                     handleSaveConfig();
-                  }} 
+                  }}
                   className="btn btn-primary"
                 >
                   💾 {editingConfigId ? 'Update' : 'Save'} & Connect
                 </button>
-                <button 
+                <button
                   onClick={(e) => {
                     e.stopPropagation();
                     setShowConfig(false);
@@ -910,7 +902,7 @@ function App() {
                         setConfig(currentConfig);
                       }
                     }
-                  }} 
+                  }}
                   className="btn btn-secondary"
                 >
                   Cancel
@@ -944,12 +936,12 @@ function App() {
                 <div className="error-message" style={{ padding: '16px', margin: '8px', background: '#fff5f5', border: '1px solid #ffd8d8', borderRadius: '6px', color: '#cf222e' }}>
                   <div style={{ fontWeight: 600, marginBottom: '8px' }}>❌ Connection Error</div>
                   <div style={{ fontSize: '13px', lineHeight: '1.5' }}>{error}</div>
-                  <button 
+                  <button
                     onClick={() => {
                       setError(null);
                       loadBuckets();
-                    }} 
-                    className="btn btn-sm" 
+                    }}
+                    className="btn btn-sm"
                     style={{ marginTop: '12px', width: '100%' }}
                   >
                     <RefreshCw size={14} style={{ marginRight: '4px', display: 'inline', verticalAlign: 'middle' }} /> Retry
@@ -1103,10 +1095,10 @@ function App() {
                                         }
                                       }}
                                       className="file-name file-name-button"
-                                      style={{ 
-                                        background: 'none', 
-                                        border: 'none', 
-                                        padding: '4px 8px', 
+                                      style={{
+                                        background: 'none',
+                                        border: 'none',
+                                        padding: '4px 8px',
                                         cursor: 'pointer',
                                         color: selectedFileItem?.key === item.key ? '#0969da' : 'inherit',
                                         fontWeight: selectedFileItem?.key === item.key ? 600 : 'normal',
@@ -1399,8 +1391,8 @@ function App() {
                             {progress.status === 'uploading' && (
                               <div className="upload-progress">
                                 <div className="upload-progress-bar">
-                                  <div 
-                                    className="upload-progress-fill" 
+                                  <div
+                                    className="upload-progress-fill"
                                     style={{ width: `${progress.progress}%` }}
                                   />
                                 </div>
