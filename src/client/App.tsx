@@ -23,7 +23,8 @@ import {
   Upload,
   Settings,
   Check,
-  AlertCircle
+  AlertCircle,
+  Search
 } from 'lucide-react';
 
 interface FileItem {
@@ -73,6 +74,7 @@ function App() {
   const [buckets, setBuckets] = useState<Bucket[]>([]);
   const [selectedBucket, setSelectedBucket] = useState<string>('');
   const [loadingBuckets, setLoadingBuckets] = useState(false);
+  const [bucketSearchQuery, setBucketSearchQuery] = useState<string>('');
   const [continuationToken, setContinuationToken] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -929,6 +931,26 @@ function App() {
                 <RefreshCw size={16} />
               </button>
             </div>
+            {/* Bucket 搜索框 */}
+            <div className="bucket-search">
+              <Search size={14} className="bucket-search-icon" />
+              <input
+                type="text"
+                placeholder="Search buckets..."
+                value={bucketSearchQuery}
+                onChange={(e) => setBucketSearchQuery(e.target.value)}
+                className="bucket-search-input"
+              />
+              {bucketSearchQuery && (
+                <button
+                  onClick={() => setBucketSearchQuery('')}
+                  className="bucket-search-clear"
+                  title="Clear search"
+                >
+                  <X size={12} />
+                </button>
+              )}
+            </div>
             <div className="sidebar-content">
               {loadingBuckets ? (
                 <div className="loading">Loading buckets...</div>
@@ -951,22 +973,31 @@ function App() {
                 <div className="empty-message">No buckets found</div>
               ) : (
                 <div className="bucket-list">
-                  {buckets.map((bucket) => (
-                    <button
-                      key={bucket.name}
-                      onClick={() => handleBucketSelect(bucket.name)}
-                      className={`bucket-item ${selectedBucket === bucket.name ? 'active' : ''}`}
-                    >
-                      <div className="bucket-info">
-                        <div className="bucket-name">{bucket.name}</div>
-                        {bucket.creationDate && (
-                          <div className="bucket-date">
-                            {formatDate(bucket.creationDate)}
-                          </div>
-                        )}
-                      </div>
-                    </button>
-                  ))}
+                  {buckets
+                    .filter((bucket) =>
+                      bucket.name.toLowerCase().includes(bucketSearchQuery.toLowerCase())
+                    )
+                    .map((bucket) => (
+                      <button
+                        key={bucket.name}
+                        onClick={() => handleBucketSelect(bucket.name)}
+                        className={`bucket-item ${selectedBucket === bucket.name ? 'active' : ''}`}
+                      >
+                        <div className="bucket-info">
+                          <div className="bucket-name">{bucket.name}</div>
+                          {bucket.creationDate && (
+                            <div className="bucket-date">
+                              {formatDate(bucket.creationDate)}
+                            </div>
+                          )}
+                        </div>
+                      </button>
+                    ))}
+                  {buckets.filter((bucket) =>
+                    bucket.name.toLowerCase().includes(bucketSearchQuery.toLowerCase())
+                  ).length === 0 && (
+                    <div className="empty-message">No matching buckets</div>
+                  )}
                 </div>
               )}
             </div>

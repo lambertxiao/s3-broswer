@@ -1037,6 +1037,56 @@ tr:hover {
   color: #8c959f;
 }
 
+/* Bucket 搜索框 */
+.bucket-search {
+  display: flex;
+  align-items: center;
+  padding: 8px 12px;
+  border-bottom: 1px solid #d1d9e0;
+  background: #ffffff;
+  position: relative;
+}
+
+.bucket-search-icon {
+  color: #8c959f;
+  flex-shrink: 0;
+  margin-right: 8px;
+}
+
+.bucket-search-input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  font-size: 13px;
+  color: #24292e;
+  outline: none;
+  padding: 4px 0;
+}
+
+.bucket-search-input::placeholder {
+  color: #8c959f;
+}
+
+.bucket-search-clear {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  background: #e7ebef;
+  border-radius: 50%;
+  cursor: pointer;
+  color: #656d76;
+  flex-shrink: 0;
+  transition: all 0.2s;
+}
+
+.bucket-search-clear:hover {
+  background: #d1d9e0;
+  color: #24292e;
+}
+
 .empty-state {
   flex: 1;
   display: flex;

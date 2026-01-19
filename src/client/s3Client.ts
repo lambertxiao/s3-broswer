@@ -18,6 +18,8 @@ export function createS3Client(config: S3Config) {
     },
     // 始终使用 path style 访问（适用于所有兼容 S3 的服务）
     forcePathStyle: true,
+    // 自定义 User-Agent
+    customUserAgent: 'Super S3 Browser/1.0.0',
   };
 
   // 如果配置了自定义 endpoint，则使用它
@@ -33,7 +35,7 @@ export async function listBuckets(config: S3Config) {
   const s3Client = createS3Client(config);
   const command = new ListBucketsCommand({});
   const response = await s3Client.send(command);
-  
+
   return (response.Buckets || []).map(bucket => ({
     name: bucket.Name || '',
     creationDate: bucket.CreationDate || null,
@@ -124,7 +126,7 @@ export async function uploadFile(
   onProgress?: (progress: number) => void
 ) {
   const s3Client = createS3Client(config);
-  
+
   // 小文件（小于 5MB）直接使用 PutObject
   if (file.size < CHUNK_SIZE) {
     const arrayBuffer = await file.arrayBuffer();
@@ -134,7 +136,7 @@ export async function uploadFile(
       Body: new Uint8Array(arrayBuffer),
       ContentType: file.type,
     });
-    
+
     if (onProgress) {
       // 模拟进度
       onProgress(50);
@@ -148,7 +150,7 @@ export async function uploadFile(
 
   // 大文件使用分片上传
   let uploadId: string | undefined;
-  
+
   try {
     // 1. 创建分片上传
     const createCommand = new CreateMultipartUploadCommand({
@@ -158,7 +160,7 @@ export async function uploadFile(
     });
     const createResponse = await s3Client.send(createCommand);
     uploadId = createResponse.UploadId;
-    
+
     if (!uploadId) {
       throw new Error('Failed to create multipart upload');
     }
@@ -183,7 +185,7 @@ export async function uploadFile(
       });
 
       const uploadPartResponse = await s3Client.send(uploadPartCommand);
-      
+
       if (!uploadPartResponse.ETag) {
         throw new Error(`Failed to upload part ${partNumber}`);
       }
@@ -211,7 +213,7 @@ export async function uploadFile(
     });
 
     await s3Client.send(completeCommand);
-    
+
     if (onProgress) {
       onProgress(100);
     }
@@ -256,14 +258,14 @@ export async function getObjectInfo(
   key: string
 ) {
   const s3Client = createS3Client(config);
-  
+
   // 获取基本信息
   const headCommand = new HeadObjectCommand({
     Bucket: bucket,
     Key: key,
   });
   const headResponse = await s3Client.send(headCommand);
-  
+
   // 提取自定义metadata（x-amz-meta- 开头的header）
   const metadata: Record<string, string> = {};
   if (headResponse.Metadata) {
@@ -271,7 +273,7 @@ export async function getObjectInfo(
       metadata[key] = headResponse.Metadata![key] || '';
     });
   }
-  
+
   // 获取tags
   let tags: Record<string, string> = {};
   try {
@@ -291,7 +293,7 @@ export async function getObjectInfo(
     // 如果获取tags失败（可能没有权限或没有tags），忽略错误
     console.warn('Failed to get object tags:', error);
   }
-  
+
   return {
     key,
     size: headResponse.ContentLength || 0,

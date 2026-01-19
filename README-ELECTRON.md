@@ -76,7 +76,7 @@ npm run electron:build:linux
 
    如果没有图标文件，构建仍然可以成功，但会使用默认图标。
 
-2. **跨平台构建**: 
+2. **跨平台构建**:
    - 在 Windows 上可以构建 Windows 版本
    - 在 macOS 上可以构建 macOS 和 Windows 版本
    - 在 Linux 上可以构建 Linux 版本
