@@ -547,6 +547,21 @@ body {
   text-align: left;
 }
 
+/* 下载队列内容 */
+.download-queue-content {
+  height: 100%;
+  text-align: left;
+}
+
+.download-queue-header {
+  margin-bottom: 8px;
+}
+
+.download-queue-list {
+  max-height: 220px;
+  overflow-y: auto;
+}
+
 .upload-queue-list {
   height: 100%;
   overflow-y: auto;

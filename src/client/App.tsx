@@ -4,12 +4,27 @@ import {
   listBuckets,
   listObjects,
   generateDownloadUrl,
+  downloadFileToPath,
   uploadFile,
   deleteObject,
+  deleteFolder,
   getObjectInfo,
   createFolder,
   type S3Config,
 } from './s3Client';
+
+// Electron API 类型声明
+declare global {
+  interface Window {
+    electron?: {
+      platform: string;
+      showSaveDialog: (options: { defaultPath?: string; filters?: Array<{ name: string; extensions: string[] }> }) => Promise<{ canceled: boolean; filePath?: string }>;
+      writeFile: (filePath: string, data: ArrayBuffer) => Promise<{ success: boolean; error?: string }>;
+      appendFile: (filePath: string, data: ArrayBuffer) => Promise<{ success: boolean; error?: string }>;
+      createEmptyFile: (filePath: string) => Promise<{ success: boolean; error?: string }>;
+    };
+  }
+}
 import {
   RefreshCw,
   Eye,
@@ -86,8 +101,9 @@ function App() {
   const [signedUrl, setSignedUrl] = useState<string>('');
   const [generatingUrl, setGeneratingUrl] = useState(false);
   const [selectedFileItem, setSelectedFileItem] = useState<FileItem | null>(null);
-  const [bottomPanelTab, setBottomPanelTab] = useState<'details' | 'upload'>('details');
+  const [bottomPanelTab, setBottomPanelTab] = useState<'details' | 'upload' | 'download'>('details');
   const [bottomPanelExpanded, setBottomPanelExpanded] = useState(false);
+  const [downloadProgress, setDownloadProgress] = useState<Record<string, { progress: number; status: 'pending' | 'downloading' | 'success' | 'error'; error?: string; fileName: string; fileSize: number }>>({});
   const [fileDetails, setFileDetails] = useState<{
     metadata: Record<string, string>;
     tags: Record<string, string>;
@@ -378,23 +394,140 @@ function App() {
   };
 
   const handleDownload = async (file: FileItem) => {
-    try {
-      const url = await generateDownloadUrl(config, selectedBucket, file.key);
-      window.open(url, '_blank');
-    } catch (err: any) {
-      alert(err.message || 'Failed to generate download URL');
+    const downloadId = `${file.key}-${Date.now()}`;
+
+    // 检查是否在 Electron 环境
+    if (window.electron) {
+      // Electron 环境：先弹出保存对话框
+      const result = await window.electron.showSaveDialog({
+        defaultPath: file.name,
+      });
+
+      if (result.canceled || !result.filePath) {
+        return; // 用户取消了
+      }
+
+      const filePath = result.filePath;
+
+      // 添加到下载队列
+      setDownloadProgress(prev => ({
+        ...prev,
+        [downloadId]: { progress: 0, status: 'downloading', fileName: file.name, fileSize: file.size }
+      }));
+
+      // 展开底部面板并切换到下载标签
+      setBottomPanelExpanded(true);
+      setBottomPanelTab('download');
+
+      try {
+        // 下载到指定路径
+        await downloadFileToPath(
+          config,
+          selectedBucket,
+          file.key,
+          file.size,
+          filePath,
+          (progress) => {
+            setDownloadProgress(prev => ({
+              ...prev,
+              [downloadId]: { ...prev[downloadId], progress, status: 'downloading' }
+            }));
+          }
+        );
+
+        // 更新状态为成功
+        setDownloadProgress(prev => ({
+          ...prev,
+          [downloadId]: { ...prev[downloadId], progress: 100, status: 'success' }
+        }));
+      } catch (err: any) {
+        // 更新状态为错误
+        setDownloadProgress(prev => ({
+          ...prev,
+          [downloadId]: { ...prev[downloadId], progress: 0, status: 'error', error: err.message || 'Failed to download' }
+        }));
+      }
+    } else {
+      // 浏览器环境：使用传统方式下载
+      setDownloadProgress(prev => ({
+        ...prev,
+        [downloadId]: { progress: 0, status: 'downloading', fileName: file.name, fileSize: file.size }
+      }));
+
+      setBottomPanelExpanded(true);
+      setBottomPanelTab('download');
+
+      try {
+        setDownloadProgress(prev => ({
+          ...prev,
+          [downloadId]: { ...prev[downloadId], progress: 50, status: 'downloading' }
+        }));
+
+        const url = await generateDownloadUrl(config, selectedBucket, file.key, 3600, true);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = file.name;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+
+        // 更新状态为成功
+        setDownloadProgress(prev => ({
+          ...prev,
+          [downloadId]: { ...prev[downloadId], progress: 100, status: 'success' }
+        }));
+      } catch (err: any) {
+        setDownloadProgress(prev => ({
+          ...prev,
+          [downloadId]: { ...prev[downloadId], progress: 0, status: 'error', error: err.message || 'Failed to download' }
+        }));
+      }
     }
   };
 
+  // 清除下载队列中的已完成/失败项
+  const clearCompletedDownloads = () => {
+    setDownloadProgress(prev => {
+      const newProgress: typeof prev = {};
+      Object.entries(prev).forEach(([key, value]) => {
+        if (value.status === 'downloading') {
+          newProgress[key] = value;
+        }
+      });
+      return newProgress;
+    });
+  };
+
+  // 移除单个下载项
+  const removeDownloadItem = (downloadId: string) => {
+    setDownloadProgress(prev => {
+      const newProgress = { ...prev };
+      delete newProgress[downloadId];
+      return newProgress;
+    });
+  };
+
   const handleDelete = async (item: FileItem) => {
-    if (!confirm(`Are you sure you want to delete ${item.name}?`)) {
-      return;
-    }
-    try {
-      await deleteObject(config, selectedBucket, item.key);
-      loadFiles(currentPath);
-    } catch (err: any) {
-      alert(err.message || 'Failed to delete file');
+    if (item.type === 'folder') {
+      if (!confirm(`Are you sure you want to delete folder "${item.name}"? The folder must be empty.`)) {
+        return;
+      }
+      try {
+        await deleteFolder(config, selectedBucket, item.key);
+        loadFiles(currentPath);
+      } catch (err: any) {
+        alert(err.message || 'Failed to delete folder');
+      }
+    } else {
+      if (!confirm(`Are you sure you want to delete ${item.name}?`)) {
+        return;
+      }
+      try {
+        await deleteObject(config, selectedBucket, item.key);
+        loadFiles(currentPath);
+      } catch (err: any) {
+        alert(err.message || 'Failed to delete file');
+      }
     }
   };
 
@@ -1211,15 +1344,15 @@ function App() {
                                         >
                                           <Link2 size={16} />
                                         </button>
-                                        <button
-                                          onClick={() => handleDelete(item)}
-                                          className="btn-icon btn-delete"
-                                          title="Delete"
-                                        >
-                                          <Trash2 size={16} />
-                                        </button>
                                       </>
                                     )}
+                                    <button
+                                      onClick={() => handleDelete(item)}
+                                      className="btn-icon btn-delete"
+                                      title={item.type === 'folder' ? 'Delete Folder' : 'Delete'}
+                                    >
+                                      <Trash2 size={16} />
+                                    </button>
                                   </div>
                                 </td>
                               </tr>
@@ -1411,6 +1544,19 @@ function App() {
             >
               <Upload size={16} style={{ marginRight: '4px', display: 'inline', verticalAlign: 'middle' }} /> Upload Queue {selectedFiles.length > 0 && `(${selectedFiles.length})`}
             </button>
+            <button
+              className={`bottom-panel-tab ${bottomPanelTab === 'download' ? 'active' : ''}`}
+              onClick={() => {
+                if (bottomPanelTab === 'download' && bottomPanelExpanded) {
+                  setBottomPanelExpanded(false);
+                } else {
+                  setBottomPanelTab('download');
+                  setBottomPanelExpanded(true);
+                }
+              }}
+            >
+              <Download size={16} style={{ marginRight: '4px', display: 'inline', verticalAlign: 'middle' }} /> Download Queue {Object.keys(downloadProgress).length > 0 && `(${Object.keys(downloadProgress).length})`}
+            </button>
           </div>
           {bottomPanelExpanded && (
             <div className="bottom-panel-content">
@@ -1543,6 +1689,67 @@ function App() {
                       );
                     })}
                   </div>
+                )}
+              </div>
+            )}
+            {bottomPanelTab === 'download' && (
+              <div className="download-queue-content">
+                {Object.keys(downloadProgress).length === 0 ? (
+                  <div className="empty-message" style={{ padding: '40px', textAlign: 'left' }}>
+                    No files in download queue
+                  </div>
+                ) : (
+                  <>
+                    <div className="download-queue-header">
+                      <button
+                        onClick={clearCompletedDownloads}
+                        className="btn btn-secondary btn-sm"
+                        style={{ marginBottom: '12px' }}
+                      >
+                        <X size={14} style={{ marginRight: '4px', display: 'inline', verticalAlign: 'middle' }} /> Clear Completed
+                      </button>
+                    </div>
+                    <div className="download-queue-list">
+                      {Object.entries(downloadProgress).map(([downloadId, progress]) => (
+                        <div key={downloadId} className="upload-queue-item">
+                          <div className="upload-item-info">
+                            <span className="upload-item-name">{progress.fileName}</span>
+                            <span className="upload-item-size">{formatSize(progress.fileSize)}</span>
+                          </div>
+                          <div className="upload-item-actions">
+                            {progress.status === 'downloading' && (
+                              <div className="upload-progress">
+                                <div className="upload-progress-bar">
+                                  <div
+                                    className="upload-progress-fill"
+                                    style={{ width: `${progress.progress}%` }}
+                                  />
+                                </div>
+                                <span className="upload-status uploading">{progress.progress}%</span>
+                              </div>
+                            )}
+                            {progress.status === 'success' && (
+                              <span className="upload-status success"><Check size={14} style={{ marginRight: '4px', display: 'inline', verticalAlign: 'middle' }} /> Success</span>
+                            )}
+                            {progress.status === 'error' && (
+                              <span className="upload-status error" title={progress.error}>
+                                <AlertCircle size={14} style={{ marginRight: '4px', display: 'inline', verticalAlign: 'middle' }} /> Failed
+                              </span>
+                            )}
+                            {progress.status !== 'downloading' && (
+                              <button
+                                onClick={() => removeDownloadItem(downloadId)}
+                                className="btn-icon btn-delete"
+                                title="Remove"
+                              >
+                                <X size={14} />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </>
                 )}
               </div>
             )}

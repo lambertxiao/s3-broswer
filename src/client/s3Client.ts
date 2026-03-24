@@ -1,6 +1,19 @@
 import { S3Client, ListBucketsCommand, ListObjectsV2Command, GetObjectCommand, PutObjectCommand, DeleteObjectCommand, HeadObjectCommand, CreateMultipartUploadCommand, UploadPartCommand, CompleteMultipartUploadCommand, AbortMultipartUploadCommand, GetObjectTaggingCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
+// Electron API 类型声明
+declare global {
+  interface Window {
+    electron?: {
+      platform: string;
+      showSaveDialog: (options: { defaultPath?: string; filters?: Array<{ name: string; extensions: string[] }> }) => Promise<{ canceled: boolean; filePath?: string }>;
+      writeFile: (filePath: string, data: ArrayBuffer) => Promise<{ success: boolean; error?: string }>;
+      appendFile: (filePath: string, data: ArrayBuffer) => Promise<{ success: boolean; error?: string }>;
+      createEmptyFile: (filePath: string) => Promise<{ success: boolean; error?: string }>;
+    };
+  }
+}
+
 export interface S3Config {
   endpoint: string;
   accessKeyId: string;
@@ -102,22 +115,138 @@ export async function generateDownloadUrl(
   config: S3Config,
   bucket: string,
   key: string,
-  expiresIn: number = 3600
+  expiresIn: number = 3600,
+  forceDownload: boolean = false
 ) {
   const s3Client = createS3Client(config);
+
+  // 获取文件名
+  const fileName = key.split('/').pop() || key;
+
   const command = new GetObjectCommand({
     Bucket: bucket,
     Key: key,
+    // 如果需要强制下载，设置 Content-Disposition 为 attachment
+    ...(forceDownload && {
+      ResponseContentDisposition: `attachment; filename="${encodeURIComponent(fileName)}"`,
+    }),
   });
 
   const url = await getSignedUrl(s3Client, command, { expiresIn });
   return url;
 }
 
+// 下载分片大小：5MB
+const DOWNLOAD_CHUNK_SIZE = 5 * 1024 * 1024; // 5MB
+
+// 并发下载文件到指定路径（Electron 环境）
+export async function downloadFileToPath(
+  config: S3Config,
+  bucket: string,
+  key: string,
+  fileSize: number,
+  filePath: string,
+  onProgress?: (progress: number) => void
+): Promise<void> {
+  // 先生成一个基础的 presigned URL（不带 Range）
+  const baseUrl = await generateDownloadUrl(config, bucket, key, 3600, false);
+
+  // 创建空文件
+  if (window.electron) {
+    await window.electron.createEmptyFile(filePath);
+  }
+
+  // 小文件直接下载
+  if (fileSize < DOWNLOAD_CHUNK_SIZE) {
+    const response = await fetch(baseUrl);
+    if (!response.ok) {
+      throw new Error(`Download failed: ${response.statusText}`);
+    }
+    const data = await response.arrayBuffer();
+
+    if (window.electron) {
+      const result = await window.electron.writeFile(filePath, data);
+      if (!result.success) {
+        throw new Error(result.error || 'Failed to write file');
+      }
+    }
+    if (onProgress) onProgress(100);
+    return;
+  }
+
+  // 大文件使用 Range 串行下载（直接写入文件，避免内存占用）
+  const totalChunks = Math.ceil(fileSize / DOWNLOAD_CHUNK_SIZE);
+
+  for (let i = 0; i < totalChunks; i++) {
+    const start = i * DOWNLOAD_CHUNK_SIZE;
+    const end = Math.min(start + DOWNLOAD_CHUNK_SIZE - 1, fileSize - 1);
+
+    // 使用 fetch 的 Range header 来请求分片
+    const response = await fetch(baseUrl, {
+      headers: {
+        'Range': `bytes=${start}-${end}`,
+      },
+    });
+
+    // 206 Partial Content 是正常的 Range 响应
+    if (!response.ok && response.status !== 206) {
+      throw new Error(`Failed to download chunk ${i}: ${response.statusText}`);
+    }
+
+    const chunkData = await response.arrayBuffer();
+
+    // 追加写入文件
+    if (window.electron) {
+      const result = await window.electron.appendFile(filePath, chunkData);
+      if (!result.success) {
+        throw new Error(result.error || 'Failed to write chunk');
+      }
+    }
+
+    if (onProgress) {
+      const progress = Math.round(((i + 1) / totalChunks) * 100);
+      onProgress(progress);
+    }
+  }
+}
+
+
 // 分片大小：5MB（S3 要求每个分片至少 5MB，除了最后一个）
 const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB
+// 并发上传数量
+const CONCURRENT_UPLOADS = 4;
 
-// 上传文件（支持分片上传和进度回调）
+// 并发控制器：限制同时运行的 Promise 数量
+async function runWithConcurrency<T>(
+  tasks: (() => Promise<T>)[],
+  concurrency: number,
+  onTaskComplete?: (completed: number, total: number) => void
+): Promise<T[]> {
+  const results: T[] = new Array(tasks.length);
+  let currentIndex = 0;
+  let completedCount = 0;
+
+  const runTask = async (): Promise<void> => {
+    while (currentIndex < tasks.length) {
+      const index = currentIndex++;
+      results[index] = await tasks[index]();
+      completedCount++;
+      if (onTaskComplete) {
+        onTaskComplete(completedCount, tasks.length);
+      }
+    }
+  };
+
+  // 启动多个并发 worker
+  const workers = Array(Math.min(concurrency, tasks.length))
+    .fill(null)
+    .map(() => runTask());
+
+  await Promise.all(workers);
+  return results;
+}
+
+// 上传文件（支持分片并发上传和进度回调）
 export async function uploadFile(
   config: S3Config,
   bucket: string,
@@ -148,7 +277,7 @@ export async function uploadFile(
     return;
   }
 
-  // 大文件使用分片上传
+  // 大文件使用分片并发上传
   let uploadId: string | undefined;
 
   try {
@@ -167,42 +296,55 @@ export async function uploadFile(
 
     // 2. 计算分片数量
     const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
-    const parts: Array<{ ETag: string; PartNumber: number }> = [];
 
-    // 3. 上传每个分片
+    // 3. 创建所有分片上传任务
+    const uploadTasks: (() => Promise<{ ETag: string; PartNumber: number }>)[] = [];
+
     for (let partNumber = 1; partNumber <= totalChunks; partNumber++) {
       const start = (partNumber - 1) * CHUNK_SIZE;
       const end = Math.min(start + CHUNK_SIZE, file.size);
       const chunk = file.slice(start, end);
-      const chunkBuffer = await chunk.arrayBuffer();
+      const currentPartNumber = partNumber; // 闭包捕获
 
-      const uploadPartCommand = new UploadPartCommand({
-        Bucket: bucket,
-        Key: key,
-        PartNumber: partNumber,
-        UploadId: uploadId,
-        Body: new Uint8Array(chunkBuffer),
+      uploadTasks.push(async () => {
+        const chunkBuffer = await chunk.arrayBuffer();
+        const uploadPartCommand = new UploadPartCommand({
+          Bucket: bucket,
+          Key: key,
+          PartNumber: currentPartNumber,
+          UploadId: uploadId,
+          Body: new Uint8Array(chunkBuffer),
+        });
+
+        const uploadPartResponse = await s3Client.send(uploadPartCommand);
+
+        if (!uploadPartResponse.ETag) {
+          throw new Error(`Failed to upload part ${currentPartNumber}`);
+        }
+
+        return {
+          ETag: uploadPartResponse.ETag,
+          PartNumber: currentPartNumber,
+        };
       });
-
-      const uploadPartResponse = await s3Client.send(uploadPartCommand);
-
-      if (!uploadPartResponse.ETag) {
-        throw new Error(`Failed to upload part ${partNumber}`);
-      }
-
-      parts.push({
-        ETag: uploadPartResponse.ETag,
-        PartNumber: partNumber,
-      });
-
-      // 更新进度
-      if (onProgress) {
-        const progress = Math.round((partNumber / totalChunks) * 90); // 90% 用于上传，10% 用于完成
-        onProgress(progress);
-      }
     }
 
-    // 4. 完成分片上传
+    // 4. 并发执行上传任务
+    const parts = await runWithConcurrency(
+      uploadTasks,
+      CONCURRENT_UPLOADS,
+      (completed, total) => {
+        if (onProgress) {
+          const progress = Math.round((completed / total) * 90); // 90% 用于上传
+          onProgress(progress);
+        }
+      }
+    );
+
+    // 5. 按 PartNumber 排序（S3 要求）
+    parts.sort((a, b) => a.PartNumber - b.PartNumber);
+
+    // 6. 完成分片上传
     const completeCommand = new CompleteMultipartUploadCommand({
       Bucket: bucket,
       Key: key,
@@ -249,6 +391,43 @@ export async function deleteObject(
   });
 
   await s3Client.send(command);
+}
+
+// 删除目录（先检查目录是否为空，为空才允许删除）
+export async function deleteFolder(
+  config: S3Config,
+  bucket: string,
+  folderKey: string
+) {
+  const s3Client = createS3Client(config);
+  // 确保路径以 / 结尾
+  const prefix = folderKey.endsWith('/') ? folderKey : `${folderKey}/`;
+
+  // 使用 listObjects 检查目录下是否有对象（MaxKeys=2：一个可能是目录本身，另一个是子对象）
+  const listCommand = new ListObjectsV2Command({
+    Bucket: bucket,
+    Prefix: prefix,
+    MaxKeys: 2,
+  });
+
+  const listResponse = await s3Client.send(listCommand);
+  const contents = listResponse.Contents || [];
+
+  // 过滤掉目录本身（即 key === prefix 的那个空对象）
+  const childObjects = contents.filter(item => item.Key !== prefix);
+
+  // 如果还有 CommonPrefixes（子目录）或子对象，则不允许删除
+  if (childObjects.length > 0) {
+    throw new Error('Directory is not empty. Please delete all files and subdirectories first.');
+  }
+
+  // 目录为空，删除目录对象本身
+  const deleteCommand = new DeleteObjectCommand({
+    Bucket: bucket,
+    Key: prefix,
+  });
+
+  await s3Client.send(deleteCommand);
 }
 
 // 创建目录（在 S3 中通过创建一个以 / 结尾的空对象来模拟目录）
