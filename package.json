@@ -1,6 +1,6 @@
 {
   "name": "s3web-browser",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Web-based S3 browser (Client-side only)",
   "type": "module",
   "scripts": {
@@ -10,7 +10,9 @@
     "electron:dev": "concurrently \"vite\" \"wait-on http://localhost:3000 && electron .\"",
     "electron:build": "vite build && electron-builder",
     "electron:build:win": "vite build && electron-builder --win",
-    "electron:build:mac": "vite build && electron-builder --mac",
+    "electron:build:mac": "vite build && electron-builder --mac --arm64 && electron-builder --mac --x64",
+    "electron:build:mac:arm64": "vite build && electron-builder --mac --arm64",
+    "electron:build:mac:x64": "vite build && electron-builder --mac --x64",
     "electron:build:linux": "vite build && electron-builder --linux"
   },
   "main": "electron/main.cjs",
@@ -65,15 +67,7 @@
       "icon": "build/icon.ico"
     },
     "mac": {
-      "target": [
-        {
-          "target": "dmg",
-          "arch": [
-            "x64",
-            "arm64"
-          ]
-        }
-      ],
+      "target": "dmg",
       "icon": "build/icon.icns",
       "category": "public.app-category.utilities"
     },

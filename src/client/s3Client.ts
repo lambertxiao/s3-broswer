@@ -19,7 +19,7 @@ export function createS3Client(config: S3Config) {
     // 始终使用 path style 访问（适用于所有兼容 S3 的服务）
     forcePathStyle: true,
     // 自定义 User-Agent
-    customUserAgent: 'Super S3 Browser/1.0.0',
+    customUserAgent: 'Super S3 Browser/1.0.1',
   };
 
   // 如果配置了自定义 endpoint，则使用它
@@ -246,6 +246,25 @@ export async function deleteObject(
   const command = new DeleteObjectCommand({
     Bucket: bucket,
     Key: key,
+  });
+
+  await s3Client.send(command);
+}
+
+// 创建目录（在 S3 中通过创建一个以 / 结尾的空对象来模拟目录）
+export async function createFolder(
+  config: S3Config,
+  bucket: string,
+  folderPath: string
+) {
+  const s3Client = createS3Client(config);
+  // 确保路径以 / 结尾
+  const normalizedPath = folderPath.endsWith('/') ? folderPath : `${folderPath}/`;
+
+  const command = new PutObjectCommand({
+    Bucket: bucket,
+    Key: normalizedPath,
+    Body: new Uint8Array(0), // 空内容
   });
 
   await s3Client.send(command);

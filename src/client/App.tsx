@@ -7,6 +7,7 @@ import {
   uploadFile,
   deleteObject,
   getObjectInfo,
+  createFolder,
   type S3Config,
 } from './s3Client';
 import {
@@ -24,7 +25,8 @@ import {
   Settings,
   Check,
   AlertCircle,
-  Search
+  Search,
+  FolderPlus
 } from 'lucide-react';
 
 interface FileItem {
@@ -98,6 +100,9 @@ function App() {
   const [loadingPreview, setLoadingPreview] = useState(false);
   const [showPreviewModal, setShowPreviewModal] = useState(false);
   const [previewFile, setPreviewFile] = useState<FileItem | null>(null);
+  const [showCreateFolderModal, setShowCreateFolderModal] = useState(false);
+  const [newFolderName, setNewFolderName] = useState('');
+  const [creatingFolder, setCreatingFolder] = useState(false);
 
   // 判断文件是否可预览
   const isPreviewable = (fileName: string, _contentType?: string): boolean => {
@@ -390,6 +395,33 @@ function App() {
       loadFiles(currentPath);
     } catch (err: any) {
       alert(err.message || 'Failed to delete file');
+    }
+  };
+
+  const handleCreateFolder = async () => {
+    if (!newFolderName.trim()) {
+      alert('Please enter a folder name');
+      return;
+    }
+
+    // 验证文件夹名称
+    const folderName = newFolderName.trim();
+    if (folderName.includes('/')) {
+      alert('Folder name cannot contain "/"');
+      return;
+    }
+
+    setCreatingFolder(true);
+    try {
+      const folderPath = currentPath ? `${currentPath}${folderName}` : folderName;
+      await createFolder(config, selectedBucket, folderPath);
+      setShowCreateFolderModal(false);
+      setNewFolderName('');
+      loadFiles(currentPath);
+    } catch (err: any) {
+      alert(err.message || 'Failed to create folder');
+    } finally {
+      setCreatingFolder(false);
     }
   };
 
@@ -1042,9 +1074,18 @@ function App() {
                         </>
                       )}
                     </div>
-                    <button onClick={() => loadFiles(currentPath)} className="btn-icon" title="Refresh">
-                      <RefreshCw size={16} />
-                    </button>
+                    <div className="toolbar-actions">
+                      <button
+                        onClick={() => setShowCreateFolderModal(true)}
+                        className="btn btn-secondary"
+                        title="Create Folder"
+                      >
+                        <FolderPlus size={16} style={{ marginRight: '4px', display: 'inline', verticalAlign: 'middle' }} /> New Folder
+                      </button>
+                      <button onClick={() => loadFiles(currentPath)} className="btn-icon" title="Refresh">
+                        <RefreshCw size={16} />
+                      </button>
+                    </div>
                   </div>
 
                 </div>
@@ -1286,6 +1327,56 @@ function App() {
                 </div>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* 创建目录对话框 */}
+      {showCreateFolderModal && (
+        <div className="config-modal">
+          <div className="config-content" style={{ maxWidth: '400px' }}>
+            <h2>Create New Folder</h2>
+            <div className="config-form">
+              <div className="form-group">
+                <label>Folder Name <span className="required">*</span></label>
+                <input
+                  type="text"
+                  placeholder="Enter folder name"
+                  value={newFolderName}
+                  onChange={(e) => setNewFolderName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !creatingFolder) {
+                      handleCreateFolder();
+                    }
+                  }}
+                  autoFocus
+                />
+                {currentPath && (
+                  <small style={{ color: '#8c959f', marginTop: '4px', display: 'block' }}>
+                    Will be created in: {currentPath}
+                  </small>
+                )}
+              </div>
+              <div className="config-actions">
+                <button
+                  onClick={handleCreateFolder}
+                  disabled={creatingFolder || !newFolderName.trim()}
+                  className="btn btn-primary"
+                >
+                  {creatingFolder ? 'Creating...' : <><FolderPlus size={16} style={{ marginRight: '4px', display: 'inline', verticalAlign: 'middle' }} /> Create</>}
+                </button>
+                <button
+                  onClick={() => {
+                    setShowCreateFolderModal(false);
+                    setNewFolderName('');
+                  }}
+                  className="btn btn-secondary"
+                  disabled={creatingFolder}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}
