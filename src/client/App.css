@@ -1230,6 +1230,234 @@ tr:hover {
   color: #8c959f;
 }
 
+.btn-bucket-settings {
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.2s;
+  color: #57606a !important;
+}
+
+.bucket-item:hover .btn-bucket-settings {
+  opacity: 1;
+}
+
+.btn-bucket-settings:hover {
+  color: #24292e !important;
+  background: #e7ebef;
+}
+
+/* Lifecycle 配置 */
+.lifecycle-rules-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-height: 420px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.lifecycle-rules-list::-webkit-scrollbar {
+  width: 5px;
+}
+
+.lifecycle-rules-list::-webkit-scrollbar-thumb {
+  background: #d1d9e0;
+  border-radius: 4px;
+}
+
+.lifecycle-rules-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.lifecycle-empty {
+  padding: 40px 20px;
+  text-align: center;
+  border: 2px dashed #d1d9e0;
+  border-radius: 12px;
+  background: #fafbfc;
+}
+
+.lifecycle-empty-icon {
+  font-size: 32px;
+  margin-bottom: 12px;
+}
+
+.lifecycle-empty-text {
+  font-size: 15px;
+  font-weight: 600;
+  color: #24292e;
+  margin-bottom: 4px;
+}
+
+.lifecycle-empty-hint {
+  font-size: 13px;
+  color: #8c959f;
+}
+
+.lifecycle-rule-card {
+  border: 1px solid #d1d9e0;
+  border-radius: 10px;
+  background: #ffffff;
+  overflow: hidden;
+  transition: box-shadow 0.2s, border-color 0.2s;
+}
+
+.lifecycle-rule-card:hover {
+  border-color: #b0b8c1;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+}
+
+.lifecycle-rule-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 14px;
+  background: #f6f8fa;
+  border-bottom: 1px solid #eaeef2;
+}
+
+.lifecycle-rule-header-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.lifecycle-rule-number {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #24292e;
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.lifecycle-rule-title {
+  font-weight: 600;
+  font-size: 13px;
+  color: #24292e;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
+}
+
+.lifecycle-rule-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.lifecycle-rule-badge.enabled {
+  background: #dafbe1;
+  color: #1a7f37;
+}
+
+.lifecycle-rule-badge.disabled {
+  background: #fef1e0;
+  color: #9a6700;
+}
+
+.lifecycle-rule-body {
+  padding: 14px;
+}
+
+.lifecycle-field-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.lifecycle-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.lifecycle-field label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #57606a;
+  letter-spacing: 0.01em;
+}
+
+.lifecycle-field label .required {
+  color: #cf222e;
+}
+
+.lifecycle-field input,
+.lifecycle-field select {
+  padding: 7px 10px;
+  border: 1px solid #d1d9e0;
+  border-radius: 6px;
+  font-size: 13px;
+  color: #24292e;
+  background: #ffffff;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.lifecycle-field input::placeholder {
+  color: #adb5bd;
+}
+
+.lifecycle-field input:focus,
+.lifecycle-field select:focus {
+  outline: none;
+  border-color: #0969da;
+  box-shadow: 0 0 0 3px rgba(9, 105, 218, 0.15);
+}
+
+.lifecycle-field input:disabled,
+.lifecycle-field select:disabled {
+  background: #f6f8fa;
+  color: #8c959f;
+}
+
+.btn-add-rule {
+  width: 100%;
+  margin-top: 12px;
+  padding: 8px 12px;
+  border: 2px dashed #d1d9e0;
+  border-radius: 8px;
+  background: transparent;
+  color: #57606a;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.btn-add-rule:hover {
+  border-color: #0969da;
+  color: #0969da;
+  background: #f0f7ff;
+}
+
+.btn-add-rule:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.lifecycle-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid #eaeef2;
+}
+
 /* Bucket 搜索框 */
 .bucket-search {
   display: flex;

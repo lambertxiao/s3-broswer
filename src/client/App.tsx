@@ -12,7 +12,10 @@ import {
   createFolder,
   putObjectTags,
   updateObjectMetadata,
+  getBucketLifecycle,
+  putBucketLifecycle,
   type S3Config,
+  type LifecycleRule,
 } from './s3Client';
 
 // Electron API 类型声明
@@ -135,6 +138,11 @@ function App() {
   const [loadingMetadataModal, setLoadingMetadataModal] = useState(false);
   const [editableMetadata, setEditableMetadata] = useState<Array<{ key: string; value: string }>>([]);
   const [savingMetadata, setSavingMetadata] = useState(false);
+  const [showLifecycleModal, setShowLifecycleModal] = useState(false);
+  const [lifecycleBucket, setLifecycleBucket] = useState<string>('');
+  const [lifecycleRules, setLifecycleRules] = useState<LifecycleRule[]>([]);
+  const [loadingLifecycle, setLoadingLifecycle] = useState(false);
+  const [savingLifecycle, setSavingLifecycle] = useState(false);
   const [openActionMenu, setOpenActionMenu] = useState<string | null>(null);
   const [actionMenuPos, setActionMenuPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
   const actionMenuRef = useRef<HTMLDivElement | null>(null);
@@ -736,6 +744,73 @@ function App() {
     setEditableMetadata(prev => prev.map((m, i) => i === index ? { ...m, [field]: val } : m));
   };
 
+  const handleOpenLifecycleModal = async (bucketName: string) => {
+    setLifecycleBucket(bucketName);
+    setShowLifecycleModal(true);
+    setLoadingLifecycle(true);
+    setLifecycleRules([]);
+    try {
+      const rules = await getBucketLifecycle(config, bucketName);
+      setLifecycleRules(rules);
+    } catch (err: any) {
+      console.error('Failed to load lifecycle config:', err);
+      alert(err.message || 'Failed to load lifecycle configuration');
+    } finally {
+      setLoadingLifecycle(false);
+    }
+  };
+
+  const handleAddLifecycleRule = () => {
+    setLifecycleRules(prev => [...prev, {
+      id: `rule-${Date.now()}`,
+      prefix: '',
+      status: 'Enabled',
+      expirationDays: undefined,
+    }]);
+  };
+
+  const handleRemoveLifecycleRule = (index: number) => {
+    setLifecycleRules(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const handleLifecycleRuleChange = (index: number, field: keyof LifecycleRule, value: any) => {
+    setLifecycleRules(prev => prev.map((rule, i) => {
+      if (i !== index) return rule;
+      return { ...rule, [field]: value };
+    }));
+  };
+
+  const handleSaveLifecycle = async () => {
+    // 验证规则
+    for (const rule of lifecycleRules) {
+      if (!rule.id.trim()) {
+        alert('Rule ID is required for all rules.');
+        return;
+      }
+      if (!rule.expirationDays) {
+        alert(`Rule "${rule.id}" must have Expiration (days) configured.`);
+        return;
+      }
+    }
+
+    // 检查重复 ID
+    const ids = lifecycleRules.map(r => r.id.trim());
+    if (new Set(ids).size !== ids.length) {
+      alert('Duplicate Rule IDs are not allowed.');
+      return;
+    }
+
+    setSavingLifecycle(true);
+    try {
+      await putBucketLifecycle(config, lifecycleBucket, lifecycleRules);
+      setShowLifecycleModal(false);
+    } catch (err: any) {
+      alert(err.message || 'Failed to save lifecycle configuration');
+    } finally {
+      setSavingLifecycle(false);
+    }
+  };
+
   const handleGenerateSignUrl = (item: FileItem) => {
     setSelectedFileForSign(item);
     setExpiresIn('3600');
@@ -1321,10 +1396,10 @@ function App() {
                       bucket.name.toLowerCase().includes(bucketSearchQuery.toLowerCase())
                     )
                     .map((bucket) => (
-                      <button
+                      <div
                         key={bucket.name}
-                        onClick={() => handleBucketSelect(bucket.name)}
                         className={`bucket-item ${selectedBucket === bucket.name ? 'active' : ''}`}
+                        onClick={() => handleBucketSelect(bucket.name)}
                       >
                         <div className="bucket-info">
                           <div className="bucket-name">{bucket.name}</div>
@@ -1334,7 +1409,17 @@ function App() {
                             </div>
                           )}
                         </div>
-                      </button>
+                        <button
+                          className="btn-icon btn-bucket-settings"
+                          title="Bucket Settings"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleOpenLifecycleModal(bucket.name);
+                          }}
+                        >
+                          <Settings size={14} />
+                        </button>
+                      </div>
                     ))}
                   {buckets.filter((bucket) =>
                     bucket.name.toLowerCase().includes(bucketSearchQuery.toLowerCase())
@@ -1811,6 +1896,125 @@ function App() {
           >
             <Pencil size={14} /> Edit Metadata
           </button>
+        </div>
+      )}
+
+      {/* Bucket Lifecycle 配置弹窗 */}
+      {showLifecycleModal && (
+        <div className="config-modal">
+          <div className="config-content" style={{ maxWidth: '600px' }}>
+            <h2>
+              <Settings size={18} style={{ marginRight: '8px', display: 'inline', verticalAlign: 'middle' }} />
+              Lifecycle - {lifecycleBucket}
+            </h2>
+            {loadingLifecycle ? (
+              <div className="loading" style={{ padding: '20px', textAlign: 'center' }}>Loading lifecycle configuration...</div>
+            ) : (
+              <div className="config-form">
+                {lifecycleRules.length === 0 ? (
+                  <div className="lifecycle-empty">
+                    <div className="lifecycle-empty-icon">📋</div>
+                    <div className="lifecycle-empty-text">No lifecycle rules configured</div>
+                    <div className="lifecycle-empty-hint">Add a rule to automatically manage object expiration</div>
+                  </div>
+                ) : (
+                  <div className="lifecycle-rules-list">
+                    {lifecycleRules.map((rule, index) => (
+                      <div key={index} className="lifecycle-rule-card">
+                        <div className="lifecycle-rule-header">
+                          <div className="lifecycle-rule-header-left">
+                            <span className="lifecycle-rule-number">{index + 1}</span>
+                            <span className="lifecycle-rule-title">{rule.id || 'Untitled Rule'}</span>
+                            <span className={`lifecycle-rule-badge ${rule.status === 'Enabled' ? 'enabled' : 'disabled'}`}>
+                              {rule.status}
+                            </span>
+                          </div>
+                          <button
+                            onClick={() => handleRemoveLifecycleRule(index)}
+                            className="btn-icon btn-delete"
+                            title="Remove Rule"
+                            disabled={savingLifecycle}
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                        <div className="lifecycle-rule-body">
+                          <div className="lifecycle-field-grid">
+                            <div className="lifecycle-field">
+                              <label>Rule ID <span className="required">*</span></label>
+                              <input
+                                type="text"
+                                value={rule.id}
+                                onChange={(e) => handleLifecycleRuleChange(index, 'id', e.target.value)}
+                                placeholder="e.g. expire-old-logs"
+                                disabled={savingLifecycle}
+                              />
+                            </div>
+                            <div className="lifecycle-field">
+                              <label>Status</label>
+                              <select
+                                value={rule.status}
+                                onChange={(e) => handleLifecycleRuleChange(index, 'status', e.target.value)}
+                                disabled={savingLifecycle}
+                              >
+                                <option value="Enabled">Enabled</option>
+                                <option value="Disabled">Disabled</option>
+                              </select>
+                            </div>
+                            <div className="lifecycle-field">
+                              <label>Prefix Filter</label>
+                              <input
+                                type="text"
+                                value={rule.prefix}
+                                onChange={(e) => handleLifecycleRuleChange(index, 'prefix', e.target.value)}
+                                placeholder="empty = all objects"
+                                disabled={savingLifecycle}
+                              />
+                            </div>
+                            <div className="lifecycle-field">
+                              <label>Expiration (days) <span className="required">*</span></label>
+                              <input
+                                type="number"
+                                min="1"
+                                value={rule.expirationDays || ''}
+                                onChange={(e) => handleLifecycleRuleChange(index, 'expirationDays', e.target.value ? parseInt(e.target.value) : undefined)}
+                                placeholder="e.g. 30"
+                                disabled={savingLifecycle}
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <button
+                  onClick={handleAddLifecycleRule}
+                  className="btn btn-add-rule"
+                  disabled={savingLifecycle}
+                >
+                  <Plus size={14} style={{ marginRight: '6px', display: 'inline', verticalAlign: 'middle' }} />
+                  Add Rule
+                </button>
+                <div className="lifecycle-actions">
+                  <button
+                    onClick={() => setShowLifecycleModal(false)}
+                    className="btn btn-secondary"
+                    disabled={savingLifecycle}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleSaveLifecycle}
+                    disabled={savingLifecycle}
+                    className="btn btn-primary"
+                  >
+                    {savingLifecycle ? 'Saving...' : <><Save size={16} style={{ marginRight: '4px', display: 'inline', verticalAlign: 'middle' }} /> Save</>}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       )}
 

@@ -1,4 +1,4 @@
-import { S3Client, ListBucketsCommand, ListObjectsV2Command, GetObjectCommand, PutObjectCommand, DeleteObjectCommand, HeadObjectCommand, CopyObjectCommand, CreateMultipartUploadCommand, UploadPartCommand, CompleteMultipartUploadCommand, AbortMultipartUploadCommand, GetObjectTaggingCommand, PutObjectTaggingCommand } from '@aws-sdk/client-s3';
+import { S3Client, ListBucketsCommand, ListObjectsV2Command, GetObjectCommand, PutObjectCommand, DeleteObjectCommand, HeadObjectCommand, CopyObjectCommand, CreateMultipartUploadCommand, UploadPartCommand, CompleteMultipartUploadCommand, AbortMultipartUploadCommand, GetObjectTaggingCommand, PutObjectTaggingCommand, GetBucketLifecycleConfigurationCommand, PutBucketLifecycleConfigurationCommand, DeleteBucketLifecycleCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
 // Electron API 类型声明
@@ -542,6 +542,110 @@ export async function putObjectTags(
     Key: key,
     Tagging: {
       TagSet: tagSet,
+    },
+  });
+
+  await s3Client.send(command);
+}
+
+// 生命周期规则接口
+export interface LifecycleRule {
+  id: string;
+  prefix: string;
+  status: 'Enabled' | 'Disabled';
+  expirationDays?: number;
+  noncurrentExpirationDays?: number;
+  abortIncompleteMultipartUploadDays?: number;
+  transitions?: Array<{
+    days: number;
+    storageClass: string;
+  }>;
+}
+
+// 获取 Bucket 生命周期配置
+export async function getBucketLifecycle(
+  config: S3Config,
+  bucket: string
+): Promise<LifecycleRule[]> {
+  const s3Client = createS3Client(config);
+
+  try {
+    const command = new GetBucketLifecycleConfigurationCommand({
+      Bucket: bucket,
+    });
+    const response = await s3Client.send(command);
+
+    return (response.Rules || []).map((rule: any) => ({
+      id: rule.ID || '',
+      prefix: rule.Filter?.Prefix || rule.Prefix || '',
+      status: rule.Status || 'Enabled',
+      expirationDays: rule.Expiration?.Days,
+      noncurrentExpirationDays: rule.NoncurrentVersionExpiration?.NoncurrentDays,
+      abortIncompleteMultipartUploadDays: rule.AbortIncompleteMultipartUpload?.DaysAfterInitiation,
+      transitions: rule.Transitions?.map((t: any) => ({
+        days: t.Days,
+        storageClass: t.StorageClass,
+      })),
+    }));
+  } catch (error: any) {
+    // NoSuchLifecycleConfiguration 表示没有配置生命周期
+    if (error.name === 'NoSuchLifecycleConfiguration' || error.Code === 'NoSuchLifecycleConfiguration') {
+      return [];
+    }
+    throw error;
+  }
+}
+
+// 保存 Bucket 生命周期配置
+export async function putBucketLifecycle(
+  config: S3Config,
+  bucket: string,
+  rules: LifecycleRule[]
+) {
+  const s3Client = createS3Client(config);
+
+  if (rules.length === 0) {
+    // 如果规则为空，删除生命周期配置
+    const deleteCommand = new DeleteBucketLifecycleCommand({
+      Bucket: bucket,
+    });
+    await s3Client.send(deleteCommand);
+    return;
+  }
+
+  const s3Rules = rules.map(rule => {
+    const s3Rule: any = {
+      ID: rule.id,
+      Filter: { Prefix: rule.prefix },
+      Status: rule.status,
+    };
+
+    if (rule.expirationDays && rule.expirationDays > 0) {
+      s3Rule.Expiration = { Days: rule.expirationDays };
+    }
+
+    if (rule.noncurrentExpirationDays && rule.noncurrentExpirationDays > 0) {
+      s3Rule.NoncurrentVersionExpiration = { NoncurrentDays: rule.noncurrentExpirationDays };
+    }
+
+    if (rule.abortIncompleteMultipartUploadDays && rule.abortIncompleteMultipartUploadDays > 0) {
+      s3Rule.AbortIncompleteMultipartUpload = { DaysAfterInitiation: rule.abortIncompleteMultipartUploadDays };
+    }
+
+    if (rule.transitions && rule.transitions.length > 0) {
+      s3Rule.Transitions = rule.transitions.map(t => ({
+        Days: t.days,
+        StorageClass: t.storageClass,
+      }));
+    }
+
+    return s3Rule;
+  });
+
+  const command = new PutBucketLifecycleConfigurationCommand({
+    Bucket: bucket,
+    LifecycleConfiguration: {
+      Rules: s3Rules,
     },
   });
 
