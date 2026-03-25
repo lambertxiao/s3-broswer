@@ -10,6 +10,8 @@ import {
   deleteFolder,
   getObjectInfo,
   createFolder,
+  putObjectTags,
+  updateObjectMetadata,
   type S3Config,
 } from './s3Client';
 
@@ -41,7 +43,11 @@ import {
   Check,
   AlertCircle,
   Search,
-  FolderPlus
+  FolderPlus,
+  Plus,
+  Save,
+  Tag,
+  MoreVertical,
 } from 'lucide-react';
 
 interface FileItem {
@@ -119,6 +125,48 @@ function App() {
   const [showCreateFolderModal, setShowCreateFolderModal] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
   const [creatingFolder, setCreatingFolder] = useState(false);
+  const [editableTags, setEditableTags] = useState<Array<{ key: string; value: string }>>([]);
+  const [savingTags, setSavingTags] = useState(false);
+  const [showTagsModal, setShowTagsModal] = useState(false);
+  const [tagsModalItem, setTagsModalItem] = useState<FileItem | null>(null);
+  const [loadingTagsModal, setLoadingTagsModal] = useState(false);
+  const [showMetadataModal, setShowMetadataModal] = useState(false);
+  const [metadataModalItem, setMetadataModalItem] = useState<FileItem | null>(null);
+  const [loadingMetadataModal, setLoadingMetadataModal] = useState(false);
+  const [editableMetadata, setEditableMetadata] = useState<Array<{ key: string; value: string }>>([]);
+  const [savingMetadata, setSavingMetadata] = useState(false);
+  const [openActionMenu, setOpenActionMenu] = useState<string | null>(null);
+  const [actionMenuPos, setActionMenuPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
+  const actionMenuRef = useRef<HTMLDivElement | null>(null);
+
+  const handleToggleActionMenu = (itemKey: string, e: React.MouseEvent<HTMLButtonElement>) => {
+    if (openActionMenu === itemKey) {
+      setOpenActionMenu(null);
+      return;
+    }
+    const rect = e.currentTarget.getBoundingClientRect();
+    // 菜单向上弹出，右对齐
+    setActionMenuPos({
+      top: rect.top - 4,
+      left: rect.right - 160, // 160 = min-width of dropdown
+    });
+    setOpenActionMenu(itemKey);
+  };
+
+  // 点击外部关闭下拉菜单
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (actionMenuRef.current && !actionMenuRef.current.contains(e.target as Node)) {
+        setOpenActionMenu(null);
+      }
+    };
+    if (openActionMenu) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [openActionMenu]);
 
   // 判断文件是否可预览
   const isPreviewable = (fileName: string, _contentType?: string): boolean => {
@@ -556,6 +604,136 @@ function App() {
     } finally {
       setCreatingFolder(false);
     }
+  };
+
+  const handleOpenTagsModal = async (item: FileItem) => {
+    setTagsModalItem(item);
+    setShowTagsModal(true);
+    setLoadingTagsModal(true);
+    setEditableTags([]);
+    try {
+      const info = await getObjectInfo(config, selectedBucket, item.key);
+      const tags = Object.entries(info.tags || {}).map(([key, value]) => ({ key, value }));
+      if (tags.length === 0) {
+        tags.push({ key: '', value: '' });
+      }
+      setEditableTags(tags);
+    } catch (err: any) {
+      console.error('Failed to load tags:', err);
+      setEditableTags([{ key: '', value: '' }]);
+    } finally {
+      setLoadingTagsModal(false);
+    }
+  };
+
+  const handleSaveTagsModal = async () => {
+    if (!tagsModalItem) return;
+
+    const validTags = editableTags.filter(tag => tag.key.trim() !== '');
+    const keys = validTags.map(tag => tag.key.trim());
+    const uniqueKeys = new Set(keys);
+    if (uniqueKeys.size !== keys.length) {
+      alert('Duplicate tag keys are not allowed.');
+      return;
+    }
+
+    const tagsRecord: Record<string, string> = {};
+    validTags.forEach(tag => {
+      tagsRecord[tag.key.trim()] = tag.value;
+    });
+
+    setSavingTags(true);
+    try {
+      await putObjectTags(config, selectedBucket, tagsModalItem.key, tagsRecord);
+      // 如果当前详情面板选中的也是这个文件，同步更新
+      if (selectedFileItem?.key === tagsModalItem.key) {
+        setFileDetails(prev => prev ? { ...prev, tags: tagsRecord } : prev);
+      }
+      setShowTagsModal(false);
+      setTagsModalItem(null);
+      setEditableTags([]);
+    } catch (err: any) {
+      alert(err.message || 'Failed to save tags');
+    } finally {
+      setSavingTags(false);
+    }
+  };
+
+  const handleAddTag = () => {
+    setEditableTags(prev => [...prev, { key: '', value: '' }]);
+  };
+
+  const handleRemoveTag = (index: number) => {
+    setEditableTags(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const handleTagChange = (index: number, field: 'key' | 'value', val: string) => {
+    setEditableTags(prev => prev.map((tag, i) => i === index ? { ...tag, [field]: val } : tag));
+  };
+
+  const handleOpenMetadataModal = async (item: FileItem) => {
+    setMetadataModalItem(item);
+    setShowMetadataModal(true);
+    setLoadingMetadataModal(true);
+    setEditableMetadata([]);
+    try {
+      const info = await getObjectInfo(config, selectedBucket, item.key);
+      const meta = Object.entries(info.metadata || {}).map(([key, value]) => ({ key, value }));
+      if (meta.length === 0) {
+        meta.push({ key: '', value: '' });
+      }
+      setEditableMetadata(meta);
+    } catch (err: any) {
+      console.error('Failed to load metadata:', err);
+      setEditableMetadata([{ key: '', value: '' }]);
+    } finally {
+      setLoadingMetadataModal(false);
+    }
+  };
+
+  const handleSaveMetadataModal = async () => {
+    if (!metadataModalItem) return;
+
+    const validMeta = editableMetadata.filter(m => m.key.trim() !== '');
+    const keys = validMeta.map(m => m.key.trim());
+    const uniqueKeys = new Set(keys);
+    if (uniqueKeys.size !== keys.length) {
+      alert('Duplicate metadata keys are not allowed.');
+      return;
+    }
+
+    const metaRecord: Record<string, string> = {};
+    validMeta.forEach(m => {
+      metaRecord[m.key.trim()] = m.value;
+    });
+
+    setSavingMetadata(true);
+    try {
+      await updateObjectMetadata(config, selectedBucket, metadataModalItem.key, metaRecord);
+      // 如果当前详情面板选中的也是这个文件，同步更新
+      if (selectedFileItem?.key === metadataModalItem.key) {
+        setFileDetails(prev => prev ? { ...prev, metadata: metaRecord } : prev);
+      }
+      setShowMetadataModal(false);
+      setMetadataModalItem(null);
+      setEditableMetadata([]);
+    } catch (err: any) {
+      alert(err.message || 'Failed to save metadata');
+    } finally {
+      setSavingMetadata(false);
+    }
+  };
+
+  const handleAddMetadata = () => {
+    setEditableMetadata(prev => [...prev, { key: '', value: '' }]);
+  };
+
+  const handleRemoveMetadata = (index: number) => {
+    setEditableMetadata(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const handleMetadataChange = (index: number, field: 'key' | 'value', val: string) => {
+    setEditableMetadata(prev => prev.map((m, i) => i === index ? { ...m, [field]: val } : m));
   };
 
   const handleGenerateSignUrl = (item: FileItem) => {
@@ -1321,15 +1499,14 @@ function App() {
                                   <div className="action-buttons">
                                     {item.type === 'file' && (
                                       <>
-                                        {isPreviewable(item.name) && (
-                                          <button
-                                            onClick={() => handlePreview(item)}
-                                            className="btn-icon btn-preview"
-                                            title="Preview"
-                                          >
-                                            <Eye size={16} />
-                                          </button>
-                                        )}
+                                        <button
+                                          onClick={() => isPreviewable(item.name) && handlePreview(item)}
+                                          className={`btn-icon btn-preview ${!isPreviewable(item.name) ? 'disabled' : ''}`}
+                                          title={isPreviewable(item.name) ? 'Preview' : 'Not previewable'}
+                                          disabled={!isPreviewable(item.name)}
+                                        >
+                                          <Eye size={16} />
+                                        </button>
                                         <button
                                           onClick={() => handleDownload(item)}
                                           className="btn-icon btn-download"
@@ -1353,6 +1530,17 @@ function App() {
                                     >
                                       <Trash2 size={16} />
                                     </button>
+                                    {item.type === 'file' && (
+                                      <div className="action-menu-wrapper">
+                                        <button
+                                          onClick={(e) => handleToggleActionMenu(item.key, e)}
+                                          className="btn-icon btn-more"
+                                          title="More Actions"
+                                        >
+                                          <MoreVertical size={16} />
+                                        </button>
+                                      </div>
+                                    )}
                                   </div>
                                 </td>
                               </tr>
@@ -1514,6 +1702,200 @@ function App() {
         </div>
       )}
 
+      {/* Tags 编辑弹窗 */}
+      {showTagsModal && tagsModalItem && (
+        <div className="config-modal">
+          <div className="config-content" style={{ maxWidth: '560px' }}>
+            <h2>
+              <Tag size={18} style={{ marginRight: '8px', display: 'inline', verticalAlign: 'middle' }} />
+              Edit Tags - {tagsModalItem.name}
+            </h2>
+            {loadingTagsModal ? (
+              <div className="loading" style={{ padding: '20px', textAlign: 'center' }}>Loading tags...</div>
+            ) : (
+              <div className="config-form">
+                <div className="tags-editor">
+                  <div className="tag-edit-row" style={{ marginBottom: '4px' }}>
+                    <span style={{ flex: 1, fontWeight: 600, fontSize: '12px', color: '#57606a', textTransform: 'uppercase' }}>Key</span>
+                    <span style={{ flex: 1, fontWeight: 600, fontSize: '12px', color: '#57606a', textTransform: 'uppercase' }}>Value</span>
+                    <span style={{ width: '32px' }}></span>
+                  </div>
+                  {editableTags.map((tag, index) => (
+                    <div key={index} className="tag-edit-row">
+                      <input
+                        type="text"
+                        className="tag-input"
+                        placeholder="Key"
+                        value={tag.key}
+                        onChange={(e) => handleTagChange(index, 'key', e.target.value)}
+                        disabled={savingTags}
+                      />
+                      <input
+                        type="text"
+                        className="tag-input"
+                        placeholder="Value"
+                        value={tag.value}
+                        onChange={(e) => handleTagChange(index, 'value', e.target.value)}
+                        disabled={savingTags}
+                      />
+                      <button
+                        onClick={() => handleRemoveTag(index)}
+                        className="btn-icon btn-delete"
+                        title="Remove Tag"
+                        disabled={savingTags}
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
+                  ))}
+                  <button
+                    onClick={handleAddTag}
+                    className="btn btn-add-tag"
+                    disabled={savingTags}
+                    style={{ marginTop: '4px' }}
+                  >
+                    <Plus size={14} style={{ marginRight: '4px', display: 'inline', verticalAlign: 'middle' }} />
+                    Add Tag
+                  </button>
+                </div>
+                <div className="config-actions" style={{ marginTop: '16px' }}>
+                  <button
+                    onClick={handleSaveTagsModal}
+                    disabled={savingTags}
+                    className="btn btn-primary"
+                  >
+                    {savingTags ? 'Saving...' : <><Save size={16} style={{ marginRight: '4px', display: 'inline', verticalAlign: 'middle' }} /> Save</>}
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowTagsModal(false);
+                      setTagsModalItem(null);
+                      setEditableTags([]);
+                    }}
+                    className="btn btn-secondary"
+                    disabled={savingTags}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* 更多操作下拉菜单（fixed 定位，避免被 overflow 裁剪） */}
+      {openActionMenu && (
+        <div
+          ref={actionMenuRef}
+          className="action-dropdown"
+          style={{ top: actionMenuPos.top, left: actionMenuPos.left, transform: 'translateY(-100%)' }}
+        >
+          <button
+            className="action-dropdown-item"
+            onClick={() => {
+              const item = items.find(i => i.key === openActionMenu);
+              setOpenActionMenu(null);
+              if (item) handleOpenTagsModal(item);
+            }}
+          >
+            <Tag size={14} /> Edit Tags
+          </button>
+          <button
+            className="action-dropdown-item"
+            onClick={() => {
+              const item = items.find(i => i.key === openActionMenu);
+              setOpenActionMenu(null);
+              if (item) handleOpenMetadataModal(item);
+            }}
+          >
+            <Pencil size={14} /> Edit Metadata
+          </button>
+        </div>
+      )}
+
+      {/* Metadata 编辑弹窗 */}
+      {showMetadataModal && metadataModalItem && (
+        <div className="config-modal">
+          <div className="config-content" style={{ maxWidth: '560px' }}>
+            <h2>
+              <Pencil size={18} style={{ marginRight: '8px', display: 'inline', verticalAlign: 'middle' }} />
+              Edit Metadata - {metadataModalItem.name}
+            </h2>
+            {loadingMetadataModal ? (
+              <div className="loading" style={{ padding: '20px', textAlign: 'center' }}>Loading metadata...</div>
+            ) : (
+              <div className="config-form">
+                <div className="tags-editor">
+                  <div className="tag-edit-row" style={{ marginBottom: '4px' }}>
+                    <span style={{ flex: 1, fontWeight: 600, fontSize: '12px', color: '#57606a', textTransform: 'uppercase' }}>Key</span>
+                    <span style={{ flex: 1, fontWeight: 600, fontSize: '12px', color: '#57606a', textTransform: 'uppercase' }}>Value</span>
+                    <span style={{ width: '32px' }}></span>
+                  </div>
+                  {editableMetadata.map((meta, index) => (
+                    <div key={index} className="tag-edit-row">
+                      <input
+                        type="text"
+                        className="tag-input"
+                        placeholder="Key"
+                        value={meta.key}
+                        onChange={(e) => handleMetadataChange(index, 'key', e.target.value)}
+                        disabled={savingMetadata}
+                      />
+                      <input
+                        type="text"
+                        className="tag-input"
+                        placeholder="Value"
+                        value={meta.value}
+                        onChange={(e) => handleMetadataChange(index, 'value', e.target.value)}
+                        disabled={savingMetadata}
+                      />
+                      <button
+                        onClick={() => handleRemoveMetadata(index)}
+                        className="btn-icon btn-delete"
+                        title="Remove"
+                        disabled={savingMetadata}
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
+                  ))}
+                  <button
+                    onClick={handleAddMetadata}
+                    className="btn btn-add-tag"
+                    disabled={savingMetadata}
+                    style={{ marginTop: '4px' }}
+                  >
+                    <Plus size={14} style={{ marginRight: '4px', display: 'inline', verticalAlign: 'middle' }} />
+                    Add Metadata
+                  </button>
+                </div>
+                <div className="config-actions" style={{ marginTop: '16px' }}>
+                  <button
+                    onClick={handleSaveMetadataModal}
+                    disabled={savingMetadata}
+                    className="btn btn-primary"
+                  >
+                    {savingMetadata ? 'Saving...' : <><Save size={16} style={{ marginRight: '4px', display: 'inline', verticalAlign: 'middle' }} /> Save</>}
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowMetadataModal(false);
+                      setMetadataModalItem(null);
+                      setEditableMetadata([]);
+                    }}
+                    className="btn btn-secondary"
+                    disabled={savingMetadata}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* 底部固定面板 - 包含文件详情和上传队列 */}
       {configValid && (
       <div className={`bottom-panel ${bottomPanelExpanded ? 'expanded' : 'collapsed'}`}>
@@ -1623,7 +2005,7 @@ function App() {
 
                           {fileDetails && Object.keys(fileDetails.metadata).length === 0 && Object.keys(fileDetails.tags).length === 0 && (
                             <div className="empty-message" style={{ padding: '20px', textAlign: 'center', color: '#8c959f' }}>
-                              No custom metadata or tags
+                              No custom metadata
                             </div>
                           )}
                         </>

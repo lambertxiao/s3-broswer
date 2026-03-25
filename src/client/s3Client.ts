@@ -1,4 +1,4 @@
-import { S3Client, ListBucketsCommand, ListObjectsV2Command, GetObjectCommand, PutObjectCommand, DeleteObjectCommand, HeadObjectCommand, CreateMultipartUploadCommand, UploadPartCommand, CompleteMultipartUploadCommand, AbortMultipartUploadCommand, GetObjectTaggingCommand } from '@aws-sdk/client-s3';
+import { S3Client, ListBucketsCommand, ListObjectsV2Command, GetObjectCommand, PutObjectCommand, DeleteObjectCommand, HeadObjectCommand, CopyObjectCommand, CreateMultipartUploadCommand, UploadPartCommand, CompleteMultipartUploadCommand, AbortMultipartUploadCommand, GetObjectTaggingCommand, PutObjectTaggingCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
 // Electron API 类型声明
@@ -501,4 +501,49 @@ export async function getObjectInfo(
     metadata,
     tags,
   };
+}
+
+// 修改对象的自定义 Metadata（通过 CopyObject 实现原地复制）
+export async function updateObjectMetadata(
+  config: S3Config,
+  bucket: string,
+  key: string,
+  metadata: Record<string, string>
+) {
+  const s3Client = createS3Client(config);
+
+  const command = new CopyObjectCommand({
+    Bucket: bucket,
+    Key: key,
+    CopySource: encodeURIComponent(`${bucket}/${key}`),
+    Metadata: metadata,
+    MetadataDirective: 'REPLACE',
+  });
+
+  await s3Client.send(command);
+}
+
+// 修改对象的 Tags
+export async function putObjectTags(
+  config: S3Config,
+  bucket: string,
+  key: string,
+  tags: Record<string, string>
+) {
+  const s3Client = createS3Client(config);
+
+  const tagSet = Object.entries(tags).map(([k, v]) => ({
+    Key: k,
+    Value: v,
+  }));
+
+  const command = new PutObjectTaggingCommand({
+    Bucket: bucket,
+    Key: key,
+    Tagging: {
+      TagSet: tagSet,
+    },
+  });
+
+  await s3Client.send(command);
 }
