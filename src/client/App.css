@@ -31,6 +31,20 @@ body {
   padding: 16px 24px;
   margin-bottom: 24px;
   border-bottom: 1px solid #d1d9e0;
+  -webkit-app-region: drag; /* 允许拖拽窗口 */
+}
+
+/* macOS hiddenInset 标题栏下，为红绿灯按钮留出空间 */
+.app-header.macos {
+  padding-left: 80px;
+}
+
+/* 按钮等交互元素不可拖拽，否则会被拖拽行为拦截 */
+.app-header button,
+.app-header a,
+.app-header input,
+.app-header select {
+  -webkit-app-region: no-drag;
 }
 
 .app-header h1 {

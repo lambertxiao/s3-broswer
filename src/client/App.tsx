@@ -1091,7 +1091,7 @@ function App() {
 
   return (
     <div className="app">
-      <header className="app-header">
+      <header className={`app-header${(window as any).electron?.platform === 'darwin' ? ' macos' : ''}`}>
         <h1><Package size={24} style={{ display: 'inline', verticalAlign: 'middle', marginRight: '8px' }} /> S3 Browser</h1>
         <button onClick={() => setShowConfig(true)} className="btn btn-config">
           <Settings size={16} style={{ marginRight: '4px', display: 'inline', verticalAlign: 'middle' }} /> Configure

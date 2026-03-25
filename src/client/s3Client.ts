@@ -32,7 +32,7 @@ export function createS3Client(config: S3Config) {
     // 始终使用 path style 访问（适用于所有兼容 S3 的服务）
     forcePathStyle: true,
     // 自定义 User-Agent
-    customUserAgent: 'Super S3 Browser/1.0.1',
+    customUserAgent: 'Super S3 Browser/1.0.2',
   };
 
   // 如果配置了自定义 endpoint，则使用它
