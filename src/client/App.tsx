@@ -30,6 +30,7 @@ declare global {
 import {
   RefreshCw,
   Eye,
+  EyeOff,
   Download,
   Trash2,
   Link2,
@@ -68,9 +69,15 @@ interface Bucket {
 const STORAGE_KEY = 's3_browser_configs';
 const CURRENT_CONFIG_KEY = 's3_browser_current_config_id';
 
+interface BucketPrefix {
+  bucket: string;
+  prefix?: string;  // 如 "data/team-a/"
+}
+
 interface S3ConfigWithId extends S3Config {
   id: string;
   name: string;
+  bucketPrefixes?: BucketPrefix[];  // Prefix 限制（可选），指定某些 bucket 仅可访问特定前缀
 }
 
 function App() {
@@ -93,7 +100,17 @@ function App() {
     region: 'us-east-1',
   });
   const [configValid, setConfigValid] = useState(false);
+  const [showSecretKey, setShowSecretKey] = useState(false);
   const [editingConfigId, setEditingConfigId] = useState<string | null>(null);
+  // formConfig 用于配置弹窗中的表单编辑，与 config（实际生效的配置）分离
+  const [formConfig, setFormConfig] = useState<S3ConfigWithId>({
+    id: '',
+    name: '',
+    endpoint: '',
+    accessKeyId: '',
+    secretAccessKey: '',
+    region: 'us-east-1',
+  });
   const [buckets, setBuckets] = useState<Bucket[]>([]);
   const [selectedBucket, setSelectedBucket] = useState<string>('');
   const [loadingBuckets, setLoadingBuckets] = useState(false);
@@ -257,9 +274,10 @@ function App() {
     }
   };
 
-  const loadFiles = async (path: string = '', bucket?: string, append: boolean = false) => {
+  const loadFiles = async (path: string = '', bucket?: string, append: boolean = false, configOverride?: S3ConfigWithId) => {
     const bucketToUse = bucket || selectedBucket;
-    if (!configValid || !bucketToUse) {
+    const configToUse = configOverride || config;
+    if (!configToUse.accessKeyId || !configToUse.secretAccessKey || !bucketToUse) {
       setError('Please select a bucket first');
       return;
     }
@@ -274,7 +292,7 @@ function App() {
 
     try {
       const data = await listObjects(
-        config,
+        configToUse,
         bucketToUse,
         path,
         append ? continuationToken : undefined,
@@ -344,7 +362,35 @@ function App() {
 
     if (savedConfigs) {
       try {
-        const parsed = JSON.parse(savedConfigs) as S3ConfigWithId[];
+        const rawParsed = JSON.parse(savedConfigs) as any[];
+        // 兼容旧版配置
+        const parsed: S3ConfigWithId[] = rawParsed.map((c: any) => {
+          const migrated = { ...c };
+
+          // 旧版 v1：单个 bucket + prefix 字段
+          if (migrated.bucket && !migrated.bucketPrefixes) {
+            migrated.bucketPrefixes = [{ bucket: migrated.bucket, prefix: migrated.prefix || undefined }];
+          }
+          delete migrated.bucket;
+          delete migrated.prefix;
+
+          // 旧版 v2：bucketPrefixes 为 Record<string, string> 对象格式
+          if (migrated.bucketPrefixes && !Array.isArray(migrated.bucketPrefixes)) {
+            const oldMap = migrated.bucketPrefixes as Record<string, string>;
+            migrated.bucketPrefixes = Object.entries(oldMap)
+              .filter(([_, prefix]) => prefix !== undefined)
+              .map(([bucket, prefix]) => ({ bucket, prefix: prefix || undefined }));
+          }
+
+          // 确保 bucketPrefixes 为数组或 undefined
+          if (Array.isArray(migrated.bucketPrefixes) && migrated.bucketPrefixes.length === 0) {
+            delete migrated.bucketPrefixes;
+          }
+
+          return migrated;
+        });
+        // 保存迁移后的配置
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(parsed));
         setConfigs(parsed);
 
         if (parsed.length > 0) {
@@ -352,9 +398,10 @@ function App() {
           const currentConfig = parsed.find(c => c.id === currentId) || parsed[0];
           setCurrentConfigId(currentConfig.id);
           setConfig(currentConfig);
+          setFormConfig(currentConfig);
           setConfigValid(!!(currentConfig.accessKeyId && currentConfig.secretAccessKey));
           if (currentConfig.accessKeyId && currentConfig.secretAccessKey) {
-            // 直接使用配置对象，不依赖状态
+            // 始终尝试加载 bucket 列表
             loadBuckets(currentConfig);
           }
         } else {
@@ -369,7 +416,7 @@ function App() {
     }
   }, []);
 
-  // 加载 bucket 列表
+  // 加载 bucket 列表：先尝试 listBuckets，失败则回退到手动配置的 bucketPrefixes
   const loadBuckets = async (configToUse?: S3ConfigWithId) => {
     const configForLoad = configToUse || config;
     if (!configForLoad.accessKeyId || !configForLoad.secretAccessKey) {
@@ -378,7 +425,6 @@ function App() {
     setLoadingBuckets(true);
     setError(null);
     try {
-      // 转换为 S3Config 类型（去掉 id 和 name）
       const s3Config: S3Config = {
         endpoint: configForLoad.endpoint,
         accessKeyId: configForLoad.accessKeyId,
@@ -386,11 +432,23 @@ function App() {
         region: configForLoad.region,
       };
       const bucketsList = await listBuckets(s3Config);
-      setBuckets(bucketsList);
+      // 如果还有手动配置的 bucket 不在 listBuckets 结果中，也补充进去（去重）
+      const manualBps = configForLoad.bucketPrefixes || [];
+      const existingNames = new Set(bucketsList.map(b => b.name));
+      const extraBucketNames = [...new Set(manualBps.map(bp => bp.bucket))].filter(name => !existingNames.has(name));
+      const extraBuckets: Bucket[] = extraBucketNames.map(name => ({ name, creationDate: null }));
+      setBuckets([...bucketsList, ...extraBuckets]);
     } catch (err: any) {
-      console.error('Failed to load buckets:', err);
-      setError(err.message || 'Failed to load buckets');
-      setBuckets([]);
+      console.error('Failed to load buckets via listBuckets:', err);
+      // listBuckets 失败，回退到手动配置的 bucket 列表
+      const manualBps = configForLoad.bucketPrefixes || [];
+      if (manualBps.length > 0) {
+        const manualBucketNames = [...new Set(manualBps.map(bp => bp.bucket))];
+        setBuckets(manualBucketNames.map(name => ({ name, creationDate: null })));
+      } else {
+        setError(err.message || 'Failed to load buckets');
+        setBuckets([]);
+      }
     } finally {
       setLoadingBuckets(false);
     }
@@ -435,6 +493,11 @@ function App() {
     } else if (!path.endsWith('/')) {
       // 如果路径不以 / 结尾，添加 /（确保是文件夹路径）
       normalizedPath = path + '/';
+    }
+    // 确保不会导航到 prefix 之上
+    const prefix = getBucketPrefix(selectedBucket);
+    if (prefix && !normalizedPath.startsWith(prefix)) {
+      normalizedPath = prefix;
     }
     setContinuationToken(null);
     setHasMore(false);
@@ -877,24 +940,25 @@ function App() {
   };
 
   const handleConfigChange = (field: keyof S3ConfigWithId, value: string) => {
-    const newConfig = { ...config, [field]: value };
-    setConfig(newConfig);
-    if (field === 'accessKeyId' || field === 'secretAccessKey') {
-      setConfigValid(!!(newConfig.accessKeyId && newConfig.secretAccessKey));
-    }
+    const newFormConfig = { ...formConfig, [field]: value };
+    setFormConfig(newFormConfig);
   };
 
   const handleSaveConfig = async () => {
-    if (!config.name || !config.name.trim()) {
+    if (!formConfig.name || !formConfig.name.trim()) {
       alert('Please enter a configuration name');
       return;
     }
-    if (!config.accessKeyId || !config.secretAccessKey) {
+    if (!formConfig.endpoint || !formConfig.endpoint.trim()) {
+      alert('Please enter an Endpoint');
+      return;
+    }
+    if (!formConfig.accessKeyId || !formConfig.secretAccessKey) {
       alert('Please fill in all required fields');
       return;
     }
 
-    const trimmedName = config.name.trim();
+    const trimmedName = formConfig.name.trim();
 
     // 检查配置名是否重复
     const nameExists = configs.some(c => {
@@ -910,10 +974,22 @@ function App() {
       return;
     }
 
+    // 规范化 bucketPrefixes：过滤空 bucket，prefix 非空时确保以 / 结尾
+    const normalizedBucketPrefixes = (formConfig.bucketPrefixes || [])
+      .filter(bp => bp.bucket.trim())
+      .map(bp => {
+        let prefix = (bp.prefix || '').trim();
+        if (prefix && !prefix.endsWith('/')) {
+          prefix += '/';
+        }
+        return { bucket: bp.bucket.trim(), prefix: prefix || undefined };
+      });
+
     const configToSave: S3ConfigWithId = {
-      ...config,
-      id: config.id || `config_${Date.now()}`,
+      ...formConfig,
+      id: formConfig.id || `config_${Date.now()}`,
       name: trimmedName,
+      bucketPrefixes: normalizedBucketPrefixes.length > 0 ? normalizedBucketPrefixes : undefined,
     };
 
     let updatedConfigs: S3ConfigWithId[];
@@ -925,7 +1001,7 @@ function App() {
       updatedConfigs = [...configs, configToSave];
     }
 
-    // 测试配置是否有效：尝试加载 bucket 列表
+    // 测试配置是否有效
     try {
       const s3Config: S3Config = {
         endpoint: configToSave.endpoint,
@@ -933,7 +1009,18 @@ function App() {
         secretAccessKey: configToSave.secretAccessKey,
         region: configToSave.region,
       };
-      await listBuckets(s3Config);
+
+      // 优先用 listBuckets 验证；如果失败且配置了 bucketPrefixes，用 listObjects 验证
+      try {
+        await listBuckets(s3Config);
+      } catch (listBucketsErr) {
+        if (configToSave.bucketPrefixes && configToSave.bucketPrefixes.length > 0) {
+          const first = configToSave.bucketPrefixes[0];
+          await listObjects(s3Config, first.bucket, first.prefix || '', undefined, 1);
+        } else {
+          throw listBucketsErr;
+        }
+      }
 
       // 配置有效，保存并应用
       localStorage.setItem(STORAGE_KEY, JSON.stringify(updatedConfigs));
@@ -945,16 +1032,16 @@ function App() {
       setError(null); // 清除之前的错误
       setShowConfig(false);
       setEditingConfigId(null);
-      // 清空当前选中的bucket和文件列表
+
+      // 始终加载 bucket 列表（listBuckets 失败会自动回退到手动配置）
       setSelectedBucket('');
       setItems([]);
       setCurrentPath('');
-      // 直接使用新配置加载bucket列表
       await loadBuckets(configToSave);
     } catch (err: any) {
       // 配置无效，显示错误提示
       const errorMessage = err.message || 'Failed to connect to S3. Please check your configuration.';
-      alert(`Configuration Error: ${errorMessage}\n\nPlease verify:\n- Endpoint URL is correct\n- Access Key ID is valid\n- Secret Access Key is correct\n- Network connection is available`);
+      alert(`Configuration Error: ${errorMessage}\n\nPlease verify:\n- Endpoint URL is correct\n- Access Key ID is valid\n- Secret Access Key is correct\n- Bucket name is correct (if specified)\n- Prefix path is correct (if specified)\n- Network connection is available`);
       console.error('S3 connection test failed:', err);
     }
   };
@@ -964,16 +1051,16 @@ function App() {
     if (selectedConfig) {
       setCurrentConfigId(configId);
       setConfig(selectedConfig);
+      setFormConfig(selectedConfig);
       const isValid = !!(selectedConfig.accessKeyId && selectedConfig.secretAccessKey);
       setConfigValid(isValid);
       localStorage.setItem(CURRENT_CONFIG_KEY, configId);
-      setEditingConfigId(null);
+      setEditingConfigId(configId);
       // 清空当前选中的bucket和文件列表
       setSelectedBucket('');
       setItems([]);
       setCurrentPath('');
       if (isValid) {
-        // 直接使用新配置加载bucket列表，不依赖状态更新
         await loadBuckets(selectedConfig);
       } else {
         setBuckets([]);
@@ -982,7 +1069,7 @@ function App() {
   };
 
   const handleAddNewConfig = () => {
-    setConfig({
+    setFormConfig({
       id: '',
       name: '',
       endpoint: '',
@@ -990,17 +1077,14 @@ function App() {
       secretAccessKey: '',
       region: 'us-east-1',
     });
-    setConfigValid(false);
     setEditingConfigId(null);
   };
 
   const handleEditConfig = (configId: string) => {
     const configToEdit = configs.find(c => c.id === configId);
     if (configToEdit) {
-      setConfig(configToEdit);
+      setFormConfig(configToEdit);
       setEditingConfigId(configId);
-      // 编辑配置时只更新 UI 状态，不触发自动加载
-      setConfigValid(!!(configToEdit.accessKeyId && configToEdit.secretAccessKey));
     }
   };
 
@@ -1017,6 +1101,8 @@ function App() {
         const newCurrent = updatedConfigs[0];
         setCurrentConfigId(newCurrent.id);
         setConfig(newCurrent);
+        setFormConfig(newCurrent);
+        setEditingConfigId(newCurrent.id);
         const isValid = !!(newCurrent.accessKeyId && newCurrent.secretAccessKey);
         setConfigValid(isValid);
         localStorage.setItem(CURRENT_CONFIG_KEY, newCurrent.id);
@@ -1024,7 +1110,6 @@ function App() {
         setSelectedBucket('');
         setItems([]);
         setCurrentPath('');
-        // 直接使用新配置加载bucket列表
         if (isValid) {
           loadBuckets(newCurrent);
         } else {
@@ -1032,14 +1117,17 @@ function App() {
         }
       } else {
         setCurrentConfigId(null);
-        setConfig({
+        const emptyConfig: S3ConfigWithId = {
           id: '',
           name: '',
           endpoint: '',
           accessKeyId: '',
           secretAccessKey: '',
           region: 'us-east-1',
-        });
+        };
+        setConfig(emptyConfig);
+        setFormConfig(emptyConfig);
+        setEditingConfigId(null);
         setConfigValid(false);
         setBuckets([]);
         setSelectedBucket('');
@@ -1051,15 +1139,30 @@ function App() {
   };
 
 
+  // 获取某个 bucket 配置的所有 prefix
+  const getBucketPrefixes = (bucketName: string): string[] => {
+    if (!config.bucketPrefixes) return [];
+    return config.bucketPrefixes
+      .filter(bp => bp.bucket === bucketName && bp.prefix)
+      .map(bp => bp.prefix!);
+  };
+
+  // 获取某个 bucket 配置的第一个 prefix（用于默认导航）
+  const getBucketPrefix = (bucketName: string): string => {
+    const prefixes = getBucketPrefixes(bucketName);
+    return prefixes.length > 0 ? prefixes[0] : '';
+  };
+
   const handleBucketSelect = (bucketName: string) => {
     setSelectedBucket(bucketName);
     setItems([]);
-    setCurrentPath('');
     setError(null);
     setContinuationToken(null);
     setHasMore(false);
-    // 直接传递 bucketName，避免状态更新延迟问题
-    loadFiles('', bucketName);
+    // 如果该 bucket 配置了 prefix，从 prefix 开始浏览
+    const prefix = getBucketPrefix(bucketName);
+    setCurrentPath(prefix);
+    loadFiles(prefix, bucketName);
   };
 
   const formatSize = (bytes: number): string => {
@@ -1076,14 +1179,16 @@ function App() {
     return new Date(date).toLocaleString();
   };
 
+  const bucketPrefix = getBucketPrefix(selectedBucket);
+  // 面包屑：完整显示当前路径，prefix 部分也展示出来
   const breadcrumbs = currentPath
     ? ['', ...currentPath.split('/').filter(Boolean)]
-    : [''];
+    : (bucketPrefix ? ['', ...bucketPrefix.split('/').filter(Boolean)] : ['']);
 
   // 构建面包屑路径的辅助函数
   const getBreadcrumbPath = (index: number): string => {
     if (index === 0) {
-      return ''; // 根目录
+      return bucketPrefix; // Home 回到 prefix 根目录（无 prefix 时为 ''）
     }
     const parts = breadcrumbs.slice(1, index + 1);
     return parts.join('/') + '/'; // 确保路径以 / 结尾（S3 文件夹路径格式）
@@ -1093,7 +1198,20 @@ function App() {
     <div className="app">
       <header className={`app-header${(window as any).electron?.platform === 'darwin' ? ' macos' : ''}`}>
         <h1><Package size={24} style={{ display: 'inline', verticalAlign: 'middle', marginRight: '8px' }} /> S3 Browser</h1>
-        <button onClick={() => setShowConfig(true)} className="btn btn-config">
+        <button onClick={() => {
+          // 如果当前有选中的配置，进入编辑模式
+          if (currentConfigId) {
+            const currentCfg = configs.find(c => c.id === currentConfigId);
+            if (currentCfg) {
+              setFormConfig(currentCfg);
+              setEditingConfigId(currentConfigId);
+            }
+          } else {
+            handleAddNewConfig();
+          }
+          setShowSecretKey(false);
+          setShowConfig(true);
+        }} className="btn btn-config">
           <Settings size={16} style={{ marginRight: '4px', display: 'inline', verticalAlign: 'middle' }} /> Configure
         </button>
       </header>
@@ -1106,12 +1224,6 @@ function App() {
             if (e.target === e.currentTarget) {
               setShowConfig(false);
               setEditingConfigId(null);
-              if (currentConfigId) {
-                const currentConfig = configs.find(c => c.id === currentConfigId);
-                if (currentConfig) {
-                  setConfig(currentConfig);
-                }
-              }
             }
           }}
         >
@@ -1183,18 +1295,19 @@ function App() {
                 <input
                   type="text"
                   placeholder="e.g., Production, Development, MinIO Local"
-                  value={config.name}
+                  value={formConfig.name}
                   onChange={(e) => handleConfigChange('name', e.target.value)}
                   required
                 />
               </div>
               <div className="form-group">
-                <label>Endpoint (可选，留空使用 AWS S3)</label>
+                <label>Endpoint <span className="required">*</span></label>
                 <input
                   type="text"
                   placeholder="https://s3.amazonaws.com"
-                  value={config.endpoint}
+                  value={formConfig.endpoint}
                   onChange={(e) => handleConfigChange('endpoint', e.target.value)}
+                  required
                 />
               </div>
               <div className="form-group">
@@ -1202,29 +1315,101 @@ function App() {
                 <input
                   type="text"
                   placeholder="your-access-key-id"
-                  value={config.accessKeyId}
+                  value={formConfig.accessKeyId}
                   onChange={(e) => handleConfigChange('accessKeyId', e.target.value)}
                   required
                 />
               </div>
               <div className="form-group">
                 <label>Secret Access Key <span className="required">*</span></label>
-                <input
-                  type="password"
-                  placeholder="your-secret-access-key"
-                  value={config.secretAccessKey}
-                  onChange={(e) => handleConfigChange('secretAccessKey', e.target.value)}
-                  required
-                />
+                <div className="password-input-wrapper">
+                  <input
+                    type={showSecretKey ? 'text' : 'password'}
+                    placeholder="your-secret-access-key"
+                    value={formConfig.secretAccessKey}
+                    onChange={(e) => handleConfigChange('secretAccessKey', e.target.value)}
+                    required
+                  />
+                  <button
+                    type="button"
+                    className="password-toggle-btn"
+                    onClick={() => setShowSecretKey(!showSecretKey)}
+                    title={showSecretKey ? '隐藏密钥' : '显示密钥'}
+                  >
+                    {showSecretKey ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </div>
               </div>
               <div className="form-group">
                 <label>Region</label>
                 <input
                   type="text"
                   placeholder="us-east-1"
-                  value={config.region}
+                  value={formConfig.region}
                   onChange={(e) => handleConfigChange('region', e.target.value)}
                 />
+              </div>
+              <div className="form-group">
+                <label>Prefix 限制（可选）</label>
+                <small style={{ color: '#8c959f', marginTop: '2px', marginBottom: '8px', display: 'block' }}>
+                  当 AK 仅对某些 Bucket 的特定前缀有权限时，可在此指定。
+                </small>
+                <div className="tags-editor">
+                  {(formConfig.bucketPrefixes || []).length > 0 && (
+                    <div className="tag-edit-row" style={{ marginBottom: '4px' }}>
+                      <span style={{ flex: 1, fontWeight: 600, fontSize: '12px', color: '#57606a', textTransform: 'uppercase' }}>Bucket</span>
+                      <span style={{ flex: 1, fontWeight: 600, fontSize: '12px', color: '#57606a', textTransform: 'uppercase' }}>Prefix</span>
+                      <span style={{ width: '32px' }}></span>
+                    </div>
+                  )}
+                  {(formConfig.bucketPrefixes || []).map((bp, index) => (
+                    <div key={index} className="tag-edit-row">
+                      <input
+                        type="text"
+                        className="tag-input"
+                        placeholder="bucket-name"
+                        value={bp.bucket}
+                        onChange={(e) => {
+                          const updated = [...(formConfig.bucketPrefixes || [])];
+                          updated[index] = { ...updated[index], bucket: e.target.value };
+                          setFormConfig({ ...formConfig, bucketPrefixes: updated });
+                        }}
+                      />
+                      <input
+                        type="text"
+                        className="tag-input"
+                        placeholder="prefix/（可选）"
+                        value={bp.prefix || ''}
+                        onChange={(e) => {
+                          const updated = [...(formConfig.bucketPrefixes || [])];
+                          updated[index] = { ...updated[index], prefix: e.target.value };
+                          setFormConfig({ ...formConfig, bucketPrefixes: updated });
+                        }}
+                      />
+                      <button
+                        onClick={() => {
+                          const updated = (formConfig.bucketPrefixes || []).filter((_, i) => i !== index);
+                          setFormConfig({ ...formConfig, bucketPrefixes: updated.length > 0 ? updated : undefined });
+                        }}
+                        className="btn-icon btn-delete"
+                        title="Remove"
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
+                  ))}
+                  <button
+                    onClick={() => {
+                      const updated = [...(formConfig.bucketPrefixes || []), { bucket: '', prefix: '' }];
+                      setFormConfig({ ...formConfig, bucketPrefixes: updated });
+                    }}
+                    className="btn btn-add-tag"
+                    style={{ marginTop: '4px' }}
+                  >
+                    <Plus size={14} style={{ marginRight: '4px', display: 'inline', verticalAlign: 'middle' }} />
+                    Add Bucket
+                  </button>
+                </div>
               </div>
               <div className="config-actions">
                 <button
@@ -1241,12 +1426,6 @@ function App() {
                     e.stopPropagation();
                     setShowConfig(false);
                     setEditingConfigId(null);
-                    if (currentConfigId) {
-                      const currentConfig = configs.find(c => c.id === currentConfigId);
-                      if (currentConfig) {
-                        setConfig(currentConfig);
-                      }
-                    }
                   }}
                   className="btn btn-secondary"
                 >
@@ -1274,7 +1453,6 @@ function App() {
                 <RefreshCw size={16} />
               </button>
             </div>
-            {/* Bucket 搜索框 */}
             <div className="bucket-search">
               <Search size={14} className="bucket-search-icon" />
               <input
@@ -1320,22 +1498,50 @@ function App() {
                     .filter((bucket) =>
                       bucket.name.toLowerCase().includes(bucketSearchQuery.toLowerCase())
                     )
-                    .map((bucket) => (
-                      <button
-                        key={bucket.name}
-                        onClick={() => handleBucketSelect(bucket.name)}
-                        className={`bucket-item ${selectedBucket === bucket.name ? 'active' : ''}`}
-                      >
-                        <div className="bucket-info">
-                          <div className="bucket-name">{bucket.name}</div>
-                          {bucket.creationDate && (
-                            <div className="bucket-date">
-                              {formatDate(bucket.creationDate)}
+                    .map((bucket) => {
+                      const bucketPrefixes = getBucketPrefixes(bucket.name);
+                      return (
+                        <div key={bucket.name}>
+                          <button
+                            onClick={() => handleBucketSelect(bucket.name)}
+                            className={`bucket-item ${selectedBucket === bucket.name ? 'active' : ''}`}
+                          >
+                            <div className="bucket-info">
+                              <div className="bucket-name">{bucket.name}</div>
+                              {bucketPrefixes.length > 0 && (
+                                <div className="bucket-date">
+                                  {bucketPrefixes.length === 1
+                                    ? `Prefix: ${bucketPrefixes[0]}`
+                                    : `${bucketPrefixes.length} prefixes`}
+                                </div>
+                              )}
+                            </div>
+                          </button>
+                          {/* 如果该 bucket 配置了多个 prefix，展开显示 prefix 列表 */}
+                          {bucketPrefixes.length > 1 && selectedBucket === bucket.name && (
+                            <div className="bucket-prefix-list">
+                              {bucketPrefixes.map((prefix) => (
+                                <button
+                                  key={prefix}
+                                  className={`bucket-prefix-item ${currentPath === prefix ? 'active' : ''}`}
+                                  onClick={() => {
+                                    setSelectedBucket(bucket.name);
+                                    setItems([]);
+                                    setError(null);
+                                    setContinuationToken(null);
+                                    setHasMore(false);
+                                    setCurrentPath(prefix);
+                                    loadFiles(prefix, bucket.name);
+                                  }}
+                                >
+                                  📁 {prefix}
+                                </button>
+                              ))}
                             </div>
                           )}
                         </div>
-                      </button>
-                    ))}
+                      );
+                    })}
                   {buckets.filter((bucket) =>
                     bucket.name.toLowerCase().includes(bucketSearchQuery.toLowerCase())
                   ).length === 0 && (

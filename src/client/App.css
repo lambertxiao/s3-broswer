@@ -1244,6 +1244,42 @@ tr:hover {
   color: #8c959f;
 }
 
+/* Bucket prefix 子列表 */
+.bucket-prefix-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 0 4px 20px;
+}
+
+.bucket-prefix-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 6px 12px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+  font-size: 13px;
+  color: #57606a;
+  transition: all 0.15s;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bucket-prefix-item:hover {
+  background: #f6f8fa;
+  color: #24292e;
+}
+
+.bucket-prefix-item.active {
+  background: #f0f3f6;
+  color: #24292e;
+  font-weight: 500;
+}
+
 /* Bucket 搜索框 */
 .bucket-search {
   display: flex;
@@ -1329,6 +1365,7 @@ tr:hover {
   pointer-events: auto;
   position: relative;
   z-index: 10002;
+  text-align: left;
 }
 
 .config-content input {
@@ -1386,11 +1423,42 @@ tr:hover {
   box-shadow: 0 0 0 3px rgba(36, 41, 46, 0.1);
 }
 
+.password-input-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.password-input-wrapper input {
+  flex: 1;
+  padding-right: 36px !important;
+}
+
+.password-toggle-btn {
+  position: absolute;
+  right: 8px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 2px;
+  color: #8c959f;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: color 0.2s;
+}
+
+.password-toggle-btn:hover {
+  color: #24292e;
+}
+
 .config-actions {
   display: flex;
   gap: 10px;
   margin-top: 10px;
   flex-wrap: wrap;
+  justify-content: flex-start;
 }
 
 .btn-secondary {

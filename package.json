@@ -1,6 +1,6 @@
 {
   "name": "s3web-browser",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Web-based S3 browser (Client-side only)",
   "type": "module",
   "scripts": {
